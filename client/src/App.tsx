@@ -1,0 +1,1128 @@
+import { AIProviderSettingsModal } from './components/AIProviderSettingsModal';
+import { SecurityCheckModal } from './components/SecurityCheckModal';
+import type { SecurityAuditReport } from '../../shared/types';
+import React, { useState, useEffect, useRef } from 'react';
+import type {
+  RepoProject,
+  RepoBranch,
+  CommitInfo,
+  DetectedError,
+  ChatMessage,
+  ProcessStatus,
+  WebSocketEvent,
+} from '../../shared/types';
+
+export default function App() {
+  // State: Server connection & Workspaces
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
+  const [mobileTab, setMobileTab] = useState<'projects' | 'chat' | 'preview'>('preview');
+  const [isMobileScreen, setIsMobileScreen] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobileScreen(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  const [workspaces, setWorkspaces] = useState<RepoProject[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<RepoProject | null>(null);
+  const [selectedBranchPath, setSelectedBranchPath] = useState<string>('');
+
+  // Derived: Current active branch and active workspace
+  const activeBranch =
+    selectedRepo?.branches.find((b) => b.path === selectedBranchPath) ||
+    selectedRepo?.branches.find((b) => b.isCurrent) ||
+    selectedRepo?.branches.find((b) => b.name === 'bowhead') ||
+    selectedRepo?.branches[0];
+
+  const activePath = activeBranch?.path || selectedRepo?.defaultPath || '';
+
+  const selectedWorkspace = selectedRepo
+    ? {
+        id: selectedRepo.id,
+        name: selectedRepo.name,
+        repoUrl: selectedRepo.repoUrl,
+        path: activePath,
+        framework: selectedRepo.framework,
+        branch: activeBranch?.name || '',
+        activeBranch,
+      }
+    : null;
+
+  // State: Git & Process
+  const [commits, setCommits] = useState<CommitInfo[]>([]);
+  const [devStatus, setDevStatus] = useState<ProcessStatus | null>(null);
+  const [isStartingDev, setIsStartingDev] = useState<boolean>(false);
+
+  // State: Chat & Sensor
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputPrompt, setInputPrompt] = useState<string>('');
+  const [isSendingPrompt, setIsSendingPrompt] = useState<boolean>(false);
+  const [activeErrors, setActiveErrors] = useState<DetectedError[]>([]);
+  const [isAutoFixing, setIsAutoFixing] = useState<boolean>(false);
+
+  // State: Preview Viewport
+  const [viewportMode, setViewportMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+  const [previewUrl, setPreviewUrl] = useState<string>('http://localhost:5173');
+  const [showLogs, setShowLogs] = useState<boolean>(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [isDeploying, setIsDeploying] = useState<boolean>(false);
+  const [isAISettingsOpen, setIsAISettingsOpen] = useState<boolean>(false);
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
+  const [securityReport, setSecurityReport] = useState<SecurityAuditReport | null>(null);
+  const [isLoadingSecurity, setIsLoadingSecurity] = useState<boolean>(false);
+  const [isSidebarPinned, setIsSidebarPinned] = useState<boolean>(true);
+  const [isSidebarHovered, setIsSidebarHovered] = useState<boolean>(false);
+  const [deployNotification, setDeployNotification] = useState<string | null>(null);
+
+  // Layout & Resizing States
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
+  const [chatWidthPercent, setChatWidthPercent] = useState<number>(50);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Initial Data Fetch
+  useEffect(() => {
+    fetchWorkspaces();
+    fetchChatHistory();
+    fetchErrors();
+    fetchDevStatus();
+  }, []);
+
+  // Setup WebSocket Client
+  useEffect(() => {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.hostname}:4000`;
+
+    let socket: WebSocket;
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      try {
+        socket = new WebSocket(wsUrl);
+        wsRef.current = socket;
+
+        socket.onopen = () => {
+          setWsConnected(true);
+          setLogs((prev) => [...prev, `[WebSocket] Terhubung ke ArtaStudio Core Server di ${wsUrl}`]);
+        };
+
+        socket.onclose = () => {
+          setWsConnected(false);
+          setLogs((prev) => [...prev, `[WebSocket] Terputus. Mencoba menghubungkan kembali...`]);
+          reconnectTimeout = setTimeout(connect, 3000);
+        };
+
+        socket.onerror = () => {
+          setWsConnected(false);
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data: WebSocketEvent = JSON.parse(event.data);
+            handleWebSocketMessage(data);
+          } catch {
+            // Ignore non-json
+          }
+        };
+      } catch (err) {
+        setWsConnected(false);
+        reconnectTimeout = setTimeout(connect, 3000);
+      }
+    }
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (socket) socket.close();
+    };
+  }, []);
+
+  // Handle incoming WebSocket messages
+  const handleWebSocketMessage = (payload: WebSocketEvent) => {
+    if (payload.channel === 'logs') {
+      if (payload.event === 'process:stdout' || payload.event === 'process:stderr') {
+        const text = (payload.data as any)?.text || '';
+        setLogs((prev) => [...prev.slice(-300), text.trim()]);
+      }
+    } else if (payload.channel === 'errors') {
+      if (payload.event === 'error:detected') {
+        setActiveErrors((prev) => [payload.data as DetectedError, ...prev]);
+      }
+    } else if (payload.channel === 'chat') {
+      if (payload.event === 'message:new') {
+        setMessages((prev) => {
+          const msg = payload.data as ChatMessage;
+          if (prev.some((m) => m.id === msg.id)) {
+            return prev.map((m) => (m.id === msg.id ? msg : m));
+          }
+          return [...prev, msg];
+        });
+      }
+    } else if (payload.channel === 'system') {
+      if (payload.event === 'deploy:started') {
+        setIsDeploying(true);
+        setDeployNotification('Edge deployment sedang berlangsung...');
+      } else if (payload.event === 'deploy:finished') {
+        setIsDeploying(false);
+        setDeployNotification(`Edge deployment sukses: ${(payload.data as any)?.url || ''}`);
+        setTimeout(() => setDeployNotification(null), 6000);
+      }
+    }
+  };
+
+  // Scroll chat to bottom on new messages
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  // Fetch API handlers
+  const fetchWorkspaces = async () => {
+    try {
+      const res = await fetch('/api/workspaces');
+      const data = await res.json();
+      if (data.success && (data.workspaces || data.repos)) {
+        const repoList: RepoProject[] = data.workspaces || data.repos;
+        setWorkspaces(repoList);
+        if (repoList.length > 0 && !selectedRepo) {
+          // Select repo with current branch or default to first
+          const currentRepo =
+            repoList.find((r) => r.branches.some((b) => b.isCurrent)) || repoList[0];
+          const currentBranch =
+            currentRepo.branches.find((b) => b.isCurrent) ||
+            currentRepo.branches.find((b) => b.name === 'bowhead') ||
+            currentRepo.branches[0];
+          setSelectedRepo(currentRepo);
+          const initialPath = currentBranch?.path || currentRepo.defaultPath;
+          setSelectedBranchPath(initialPath);
+          fetchCommits(initialPath);
+          updatePreviewUrl(currentRepo, initialPath);
+        }
+      }
+    } catch (err) {
+      console.error('Gagal mengambil daftar workspaces:', err);
+    }
+  };
+
+  const updatePreviewUrl = (repo: RepoProject, targetPath: string) => {
+    if (
+      repo.name.toLowerCase().includes('bowhead') ||
+      targetPath.includes('bowhead') ||
+      repo.id.includes('artaloka')
+    ) {
+      setPreviewUrl('http://localhost:5199');
+    } else {
+      setPreviewUrl('http://localhost:5173');
+    }
+  };
+
+  const fetchCommits = async (projectPath: string) => {
+    try {
+      const res = await fetch(`/api/git/history?path=${encodeURIComponent(projectPath)}&limit=10`);
+      const data = await res.json();
+      if (data.success && data.commits) {
+        setCommits(data.commits);
+      }
+    } catch (err) {
+      console.error('Gagal mengambil git history:', err);
+    }
+  };
+
+  const fetchChatHistory = async () => {
+    try {
+      const res = await fetch('/api/chat/history?sessionId=default');
+      const data = await res.json();
+      if (data.success && data.messages) {
+        setMessages(data.messages);
+      }
+    } catch (err) {
+      console.error('Gagal mengambil riwayat chat:', err);
+    }
+  };
+
+  const fetchErrors = async () => {
+    try {
+      const res = await fetch('/api/sensor/errors');
+      const data = await res.json();
+      if (data.success && data.errors) {
+        setActiveErrors(data.errors);
+      }
+    } catch (err) {
+      console.error('Gagal mengambil error sensor:', err);
+    }
+  };
+
+  const fetchDevStatus = async () => {
+    try {
+      const path = selectedWorkspace?.path || '';
+      const res = await fetch(`/api/process/status?path=${encodeURIComponent(path)}`);
+      const data = await res.json();
+      if (data.success && data.status) {
+        setDevStatus(data.status);
+      }
+    } catch (err) {
+      console.error('Gagal mengambil status proses:', err);
+    }
+  };
+
+  // Actions
+  // Drag resizer logic
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+      const leftOffset = isSidebarOpen ? 256 : 40;
+      const totalWidth = window.innerWidth - leftOffset;
+      const relX = e.clientX - leftOffset;
+      const pct = Math.min(Math.max((relX / totalWidth) * 100, 15), 85);
+      setChatWidthPercent(pct);
+    };
+    const handleMouseUp = () => setIsDragging(false);
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, isSidebarOpen]);
+
+  const handleSelectWorkspace = (repo: RepoProject, branchPath?: string) => {
+    setSelectedRepo(repo);
+    const targetBranch = branchPath
+      ? repo.branches.find((b) => b.path === branchPath)
+      : repo.branches.find((b) => b.isCurrent) ||
+        repo.branches.find((b) => b.name === 'bowhead') ||
+        repo.branches[0];
+    const targetPath = targetBranch?.path || repo.defaultPath;
+    setSelectedBranchPath(targetPath);
+    fetchCommits(targetPath);
+    updatePreviewUrl(repo, targetPath);
+  };
+
+  const handleSelectBranch = (repo: RepoProject, branchPath: string) => {
+    setSelectedBranchPath(branchPath);
+    fetchCommits(branchPath);
+    updatePreviewUrl(repo, branchPath);
+  };
+
+  const handleToggleDevServer = async () => {
+    if (!selectedWorkspace) return;
+    setIsStartingDev(true);
+    try {
+      if (devStatus?.status === 'running') {
+        const res = await fetch('/api/process/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectPath: selectedWorkspace.path }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setDevStatus({ projectPath: selectedWorkspace.path, status: 'stopped' });
+        }
+      } else {
+        const portToUse = selectedWorkspace.path.includes('bowhead') ? 5199 : 5173;
+        const res = await fetch('/api/process/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectPath: selectedWorkspace.path, port: portToUse }),
+        });
+        const data = await res.json();
+        const instance = data.instance || data.status;
+        if (data.success && instance) {
+          setDevStatus(instance);
+          if (instance.url) setPreviewUrl(instance.url);
+        }
+
+        // Auto poll status for 5 seconds to catch live url
+        let attempts = 0;
+        const interval = setInterval(async () => {
+          attempts++;
+          try {
+            const pollRes = await fetch(
+              `/api/process/status?projectPath=${encodeURIComponent(selectedWorkspace.path)}`
+            );
+            const pollData = await pollRes.json();
+            if (pollData.status && pollData.status.status === 'running') {
+              setDevStatus(pollData.status);
+              if (pollData.status.url) setPreviewUrl(pollData.status.url);
+              clearInterval(interval);
+            }
+          } catch (e) {}
+          if (attempts > 10) clearInterval(interval);
+        }, 1000);
+      }
+    } catch (err) {
+      console.error('Gagal mengubah status dev server:', err);
+    } finally {
+      setIsStartingDev(false);
+    }
+  };
+
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!inputPrompt.trim() || isSendingPrompt) return;
+
+    const text = inputPrompt.trim();
+    setInputPrompt('');
+    setIsSendingPrompt(true);
+
+    try {
+      const res = await fetch('/api/chat/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: 'default',
+          text,
+          projectPath: selectedWorkspace?.path,
+          engineMode: (() => {
+            try {
+              const cfg = localStorage.getItem('artastudio_ai_config');
+              if (cfg) return JSON.parse(cfg).mode || 'opencode';
+            } catch(e) {}
+            return 'opencode';
+          })(),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.userMessage && data.assistantMessage) {
+          setMessages((prev) => {
+            const hasUser = prev.some((m) => m.id === data.userMessage.id);
+            const hasAssistant = prev.some((m) => m.id === data.assistantMessage.id);
+            const next = [...prev];
+            if (!hasUser) next.push(data.userMessage);
+            if (!hasAssistant) next.push(data.assistantMessage);
+            return next;
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Gagal mengirim pesan chat:', err);
+    } finally {
+      setIsSendingPrompt(false);
+    }
+  };
+
+  const handleTriggerAutoFix = async (errorId: string) => {
+    setIsAutoFixing(true);
+    try {
+      const res = await fetch('/api/sensor/auto-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ errorId }),
+      });
+      const data = await res.json();
+      if (data.success && data.prompt) {
+        setInputPrompt(data.prompt);
+      }
+    } catch (err) {
+      console.error('Gagal memicu auto-fix:', err);
+    } finally {
+      setIsAutoFixing(false);
+    }
+  };
+
+  const handleOpenSecurityAudit = async () => {
+    const targetPath = selectedBranchPath || selectedRepo?.defaultPath || process.cwd();
+    setIsSecurityModalOpen(true);
+    setIsLoadingSecurity(true);
+    try {
+      const res = await fetch(`/api/security/audit?projectPath=${encodeURIComponent(targetPath)}`);
+      const data = await res.json();
+      if (data.success && data.report) {
+        setSecurityReport(data.report);
+      }
+    } catch (err) {
+      console.error('Gagal menjalankan security audit:', err);
+    } finally {
+      setIsLoadingSecurity(false);
+    }
+  };
+
+  const handleTriggerDeploy = async () => {
+    if (!selectedWorkspace || isDeploying) return;
+    setIsDeploying(true);
+    try {
+      const res = await fetch('/api/deploy/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath: selectedWorkspace.path }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDeployNotification('Edge deployment dimulai...');
+      }
+    } catch (err) {
+      console.error('Gagal memicu deployment:', err);
+      setIsDeploying(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen w-screen bg-[#0b0f17] text-slate-100 font-sans select-none overflow-hidden">
+      {/* Top Header */}
+      <header className="h-14 border-b border-slate-800/80 bg-[#0f172a]/90 backdrop-blur-md px-4 flex items-center justify-between shrink-0 z-20">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-amber-500/10">
+            <svg className="w-5 h-5 text-slate-950 font-black fill-current" viewBox="0 0 24 24">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+            </svg>
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-base tracking-tight text-white">ArtaStudio</span>
+              <button
+                onClick={() => setIsAISettingsOpen(true)}
+                title="Klik untuk atur AI (OpenCode Gratis / Custom API Key)"
+                className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+              >
+                <span>AI Suite</span>
+                <span className="text-[11px]">⚙️</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 hidden sm:block">AI Web Development Suite</p>
+          </div>
+        </div>
+
+        {/* Project Selector & Status */}
+        <div className="flex items-center gap-3">
+          {/* Workspace & Branch dropdown */}
+          <div className="relative flex items-center gap-2">
+            <select
+              value={selectedRepo?.id || ''}
+              onChange={(e) => {
+                const repo = workspaces.find((w) => w.id === e.target.value);
+                if (repo) handleSelectWorkspace(repo);
+              }}
+              className="bg-slate-900/90 text-xs text-slate-200 border border-slate-700/60 rounded-md px-3 py-1.5 focus:outline-none focus:border-amber-500 transition-colors cursor-pointer max-w-[170px] truncate"
+            >
+              {workspaces.map((repo) => (
+                <option key={repo.id} value={repo.id}>
+                  {repo.name} ({repo.framework})
+                </option>
+              ))}
+            </select>
+
+            {selectedRepo && selectedRepo.branches && selectedRepo.branches.length > 1 && (
+              <select
+                value={activeBranch?.path || selectedBranchPath}
+                onChange={(e) => handleSelectBranch(selectedRepo, e.target.value)}
+                className="bg-slate-900/90 text-xs text-amber-400 font-mono border border-slate-700/60 rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 transition-colors cursor-pointer max-w-[160px] truncate"
+                title="Pilih cabang / worktree aktif"
+              >
+                {selectedRepo.branches.map((b) => (
+                  <option key={b.path} value={b.path}>
+                    {b.name}{b.isCurrent ? ' (aktif)' : b.name === 'bowhead' ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Dev Server toggle */}
+          <button
+            onClick={handleToggleDevServer}
+            disabled={isStartingDev}
+            className={`text-xs px-3 py-1.5 rounded-md font-medium border transition-all flex items-center gap-1.5 ${
+              devStatus?.status === 'running'
+                ? 'bg-emerald-950/40 border-emerald-600/60 text-emerald-300 hover:bg-emerald-900/50'
+                : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700/60'
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                devStatus?.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+              }`}
+            />
+            {isStartingDev
+              ? 'Memproses...'
+              : devStatus?.status === 'running'
+              ? 'Server Aktif'
+              : 'Jalankan Dev'}
+          </button>
+
+          {/* WebSocket Badge */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] border border-slate-800 bg-slate-900/50">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                wsConnected ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-amber-400 animate-ping'
+              }`}
+            />
+            <span className="text-slate-400 font-mono text-[10px]">
+              {wsConnected ? 'WS 4000' : 'Menyambung...'}
+            </span>
+          </div>
+
+          {/* Deploy Button */}
+          <button
+            onClick={handleOpenSecurityAudit}
+            disabled={isDeploying}
+            className="text-xs px-3.5 py-1.5 rounded-md font-semibold bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 hover:from-amber-400 hover:to-amber-500 transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {isDeploying ? (
+              <>
+                <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="none"
+                  />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Publikasi...
+              </>
+            ) : (
+              'Publikasi ke Edge'
+            )}
+          </button>
+        </div>
+      </header>
+
+      {/* Mobile Top Slice Navigation (Khusus Layar HP / Layar Kecil) */}
+      <div className="md:hidden flex items-center justify-around bg-[#0a0e17] border-b border-slate-800 p-1.5 shrink-0 z-30">
+        <button
+          onClick={() => setMobileTab('projects')}
+          className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${
+            mobileTab === 'projects'
+              ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <span>📁 Proyek</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('chat')}
+          className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${
+            mobileTab === 'chat'
+              ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <span>💬 Chat AI</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('preview')}
+          className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${
+            mobileTab === 'preview'
+              ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <span>📱 Preview</span>
+        </button>
+      </div>
+
+
+      {/* Main 3-Column Studio Workspace */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Toggle Sidebar Button when collapsed */}
+        {!isSidebarOpen && (
+          <button
+            onClick={() => setIsSidebarOpen(true)}
+            title="Buka Sidebar Proyek"
+            className="absolute left-2 top-2 z-30 p-1.5 rounded-md bg-slate-900 border border-slate-700 text-slate-300 hover:text-amber-400 hover:border-amber-500/50 shadow-lg transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M4 6h16M4 12h16M4 18h7"
+              />
+            </svg>
+          </button>
+        )}
+
+        {/* Left Column: Workspace & Git Timeline */}
+        {isSidebarOpen && (
+          <aside className={`w-full md:w-72 border-r border-slate-800/80 bg-[#0c121e]/90 flex flex-col shrink-0 ${mobileTab === 'projects' ? 'flex' : 'hidden md:flex'}` }>
+            <div className="p-3 border-b border-slate-800/60 flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                <span>Repository & Proyek</span>
+                <span className="text-[10px] font-mono text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
+                  {workspaces.length}
+                </span>
+              </h3>
+              <button
+                onClick={() => setIsSidebarOpen(false)}
+                title="Tutup / Minimize Sidebar"
+                className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            {/* Project Workspaces List */}
+            <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
+              {workspaces.map((repo) => {
+                const isSelected = selectedRepo?.id === repo.id;
+                const currentRepoBranch = isSelected
+                  ? activeBranch
+                  : repo.branches.find((b) => b.isCurrent) ||
+                    repo.branches.find((b) => b.name === 'bowhead') ||
+                    repo.branches[0];
+
+                return (
+                  <div
+                    key={repo.id}
+                    className={`rounded-lg p-3 transition-all border ${
+                      isSelected
+                        ? 'bg-slate-900/95 border-amber-500/60 shadow-lg shadow-amber-500/5'
+                        : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-800/40 hover:border-slate-700/70'
+                    }`}
+                  >
+                    {/* Header: Big Project Name & Framework Badge */}
+                    <div
+                      onClick={() => handleSelectWorkspace(repo)}
+                      className="cursor-pointer flex items-start justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            isSelected ? 'bg-amber-400 shadow-[0_0_8px_#f59e0b]' : 'bg-slate-600'
+                          }`}
+                        />
+                        <span className="font-extrabold text-sm tracking-tight text-white group-hover:text-amber-400">
+                          {repo.name}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 border border-slate-700/60 shrink-0">
+                        {repo.framework}
+                      </span>
+                    </div>
+
+                    {/* Subtitle: Repo URL */}
+                    <div
+                      className="mt-1.5 text-[11px] font-mono text-slate-400 truncate flex items-center gap-1.5"
+                      title={repo.repoUrl}
+                    >
+                      <svg
+                        className="w-3.5 h-3.5 text-slate-500 shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+                        />
+                      </svg>
+                      <span className="truncate hover:text-slate-200 select-all">{repo.repoUrl}</span>
+                    </div>
+
+                    {/* Branch / Worktree Selector & Tags */}
+                    {repo.branches && repo.branches.length > 0 && (
+                      <div className="mt-2.5 pt-2 border-t border-slate-800/60">
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1.5">
+                          <span className="font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                            <svg
+                              className="w-3 h-3 text-amber-500/80"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth="2"
+                                d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
+                              />
+                            </svg>
+                            Cabang / Worktree
+                          </span>
+                          <span className="font-mono text-slate-500 bg-slate-950 px-1 py-0.2 rounded border border-slate-800">
+                            {repo.branches.length} cabang
+                          </span>
+                        </div>
+
+                        {repo.branches.length > 1 ? (
+                          <div className="relative">
+                            <select
+                              value={currentRepoBranch?.path || repo.defaultPath}
+                              onChange={(e) => {
+                                handleSelectWorkspace(repo, e.target.value);
+                              }}
+                              className="w-full bg-slate-950/90 text-xs text-amber-300 font-mono border border-slate-700/80 rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 cursor-pointer transition-colors"
+                            >
+                              {repo.branches.map((b) => (
+                                <option key={b.path} value={b.path}>
+                                  {b.name}
+                                  {b.isCurrent ? ' (aktif)' : b.name === 'bowhead' ? ' (default)' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-xs font-mono text-slate-300 bg-slate-950/60 px-2 py-1 rounded border border-slate-800">
+                            <span className="text-emerald-400">🌿</span>
+                            <span className="truncate">{repo.branches[0].name}</span>
+                            {repo.branches[0].isCurrent && (
+                              <span className="text-[10px] text-emerald-400 ml-auto font-sans font-bold">
+                                aktif
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Git Commits Timeline */}
+            <div className="h-56 border-t border-slate-800/60 flex flex-col bg-[#0a0e17]">
+              <div className="p-2.5 border-b border-slate-800/60 flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Riwayat Commit
+                </span>
+                <span className="text-[10px] text-emerald-400 font-mono">HEAD</span>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+                {commits.length === 0 ? (
+                  <div className="text-[11px] text-slate-500 italic p-2">Tidak ada data commit</div>
+                ) : (
+                  commits.map((c) => (
+                    <div
+                      key={c.hash}
+                      className="p-1.5 rounded bg-slate-900/60 border border-slate-800/60 text-[11px] hover:border-slate-700"
+                    >
+                      <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 mb-0.5">
+                        <span className="font-mono text-amber-400">{c.shortHash}</span>
+                        <span className="capitalize text-indigo-400">{c.type}</span>
+                      </div>
+                      <p className="truncate text-slate-300 font-medium">{c.message}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </aside>
+        )}
+
+        {/* Center Column: Chat & AI Workspace */}
+        {isChatOpen ? (
+          <section
+            style={!isMobileScreen ? { width: `${chatWidthPercent}%` } : undefined}
+            className={`flex flex-col bg-[#0d1424]/50 border-r border-slate-800/80 relative shrink-0 transition-all duration-75 ${
+              isMobileScreen
+                ? (mobileTab === 'chat' ? 'flex-1 w-full flex' : 'hidden')
+                : 'flex'
+            }`}
+          >
+            {/* Active Workspace Bar */}
+            <div className="h-10 border-b border-slate-800/60 px-4 flex items-center justify-between bg-slate-900/30 text-xs text-slate-400">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Workspace:</span>
+                <span className="font-semibold text-slate-200">{selectedWorkspace?.name || '-'}</span>
+                {activeBranch?.name && (
+                  <span className="text-[11px] font-mono text-amber-400 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800">
+                    🌿 {activeBranch.name}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsChatOpen(false)}
+                  title="Minimize / Sembunyikan Chat (Preview Layar Penuh)"
+                  className="px-2 py-0.5 rounded text-[11px] border border-slate-800 bg-slate-900 hover:border-slate-700 text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                  <span>Sembunyikan Chat</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Error Sensor Banner */}
+            {activeErrors.length > 0 && (
+              <div className="p-3 bg-red-950/40 border-b border-red-800/50 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-red-300">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  <span>{activeErrors.length} Temuan Kritis Terdeteksi di Kode/Runtime</span>
+                </div>
+                <button
+                  onClick={() => handleTriggerAutoFix(activeErrors[0].id)}
+                  disabled={isAutoFixing}
+                  className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-semibold text-xs shadow disabled:opacity-50"
+                >
+                  {isAutoFixing ? 'Memperbaiki...' : 'Perbaiki Otomatis'}
+                </button>
+              </div>
+            )}
+
+            {/* Message Feed */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
+                >
+                  <div className="flex items-center gap-2 mb-1 px-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {m.sender === 'user' ? 'Pengguna' : 'ArtaStudio AI'}
+                    </span>
+                    <span className="text-[10px] text-slate-600">
+                      {new Date(m.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <div
+                    className={`max-w-[85%] rounded-xl p-3 text-xs leading-relaxed ${
+                      m.sender === 'user'
+                        ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-none shadow-md shadow-amber-500/10'
+                        : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-none'
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap">{m.text}</p>
+                    {m.status && m.status !== 'done' && (
+                      <div className="mt-2 flex items-center gap-1.5 text-[10px] text-indigo-400 border-t border-slate-800/80 pt-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
+                        <span className="capitalize">Status: {m.status}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={chatScrollRef}></div>
+            </div>
+
+            {/* Chat Input Form */}
+            <form
+              onSubmit={handleSendMessage}
+              className="p-3 border-t border-slate-800/80 bg-slate-950/80 backdrop-blur-sm"
+            >
+              <div className="relative flex items-center">
+                <textarea
+                  value={inputPrompt}
+                  onChange={(e) => setInputPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  placeholder="Tanyakan atau instruksikan perubahan kode pada ArtaStudio..."
+                  rows={2}
+                  className="w-full bg-slate-900 text-xs text-slate-100 placeholder-slate-500 border border-slate-800 rounded-lg p-2.5 pr-20 focus:outline-none focus:border-amber-500 transition-colors resize-none font-sans"
+                />
+                <button
+                  type="submit"
+                  disabled={!inputPrompt.trim() || isSendingPrompt}
+                  className="absolute right-2 bottom-2.5 px-3 py-1.5 rounded-md text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 disabled:opacity-40 transition-all"
+                >
+                  Kirim
+                </button>
+              </div>
+              <div className="flex items-center justify-between mt-1 text-[10px] text-slate-500 px-1">
+                <span>Tekan Enter untuk kirim, Shift + Enter baris baru</span>
+                <button
+                  type="button"
+                  onClick={() => setShowLogs(!showLogs)}
+                  className="hover:text-slate-300 transition-colors"
+                >
+                  {showLogs ? 'Sembunyikan Log' : 'Tampilkan Log'}
+                </button>
+              </div>
+            </form>
+          </section>
+        ) : null}
+
+        {/* Draggable Split Divider Bar */}
+        {isChatOpen && (
+          <div
+            onMouseDown={() => setIsDragging(true)}
+            className="hidden md:flex w-1.5 hover:w-2 bg-slate-800/80 hover:bg-amber-500 cursor-col-resize transition-all z-20 items-center justify-center shrink-0 group select-none"
+            title="Tarik untuk geser ukuran Chat vs Preview"
+          >
+            <div className="w-0.5 h-8 bg-slate-600 group-hover:bg-amber-200 rounded-full" />
+          </div>
+        )}
+
+        {/* Right Column: Live Preview Viewport (Full Flex) */}
+        <section className={`flex-1 flex flex-col bg-[#0a0f19] relative min-w-0 w-full ${
+          isMobileScreen
+            ? (mobileTab === 'preview' ? 'flex' : 'hidden')
+            : 'flex'
+        }` }>
+          {/* Button restore chat when minimized */}
+          {!isChatOpen && (
+            <button
+              onClick={() => setIsChatOpen(true)}
+              title="Buka Kembali Chat AI"
+              className="absolute left-3 top-12 z-30 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700/80 text-amber-400 hover:text-amber-300 shadow-xl flex items-center gap-1.5 text-xs font-semibold backdrop-blur"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+                />
+              </svg>
+              <span>Buka Chat AI</span>
+            </button>
+          )}
+
+          {/* Viewport Top Toolbar */}
+          <div className="h-10 border-b border-slate-800/60 px-3 flex items-center justify-between bg-slate-900/60">
+            {/* Device Mode Switcher */}
+            <div className="flex items-center gap-1 bg-slate-950/80 p-0.5 rounded-md border border-slate-800">
+              <button
+                onClick={() => setViewportMode('desktop')}
+                className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
+                  viewportMode === 'desktop'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Desktop
+              </button>
+              <button
+                onClick={() => setViewportMode('tablet')}
+                className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
+                  viewportMode === 'tablet'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Tablet (768px)
+              </button>
+              <button
+                onClick={() => setViewportMode('mobile')}
+                className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
+                  viewportMode === 'mobile'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Mobile (375px)
+              </button>
+            </div>
+
+            {/* Address Bar */}
+            <div className="flex items-center gap-2 flex-1 max-w-xs mx-3">
+              <input
+                type="text"
+                value={previewUrl}
+                onChange={(e) => setPreviewUrl(e.target.value)}
+                className="w-full bg-slate-950 text-[11px] font-mono text-slate-300 border border-slate-800 rounded px-2 py-0.5 focus:outline-none focus:border-amber-500"
+              />
+              <button
+                onClick={() => {
+                  const iframe = document.getElementById('preview-iframe') as HTMLIFrameElement;
+                  if (iframe) iframe.src = previewUrl;
+                }}
+                className="text-xs text-slate-400 hover:text-white p-1"
+                title="Muat Ulang"
+              >
+                ↻
+              </button>
+            </div>
+
+            {/* External Link */}
+            <a
+              href={previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] font-mono text-slate-400 hover:text-amber-400 transition-colors"
+            >
+              Buka Tab ↗
+            </a>
+          </div>
+
+          {/* Iframe Viewport Container */}
+          <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-[#070b12]">
+            <div
+              className={`h-full transition-all duration-300 rounded-lg overflow-hidden border border-slate-800 shadow-2xl ${
+                viewportMode === 'desktop'
+                  ? 'w-full'
+                  : viewportMode === 'tablet'
+                  ? 'w-[768px]'
+                  : 'w-[375px]'
+              }`}
+            >
+              <iframe
+                id="preview-iframe"
+                src={previewUrl}
+                title="ArtaStudio Live Preview"
+                className="w-full h-full border-0 bg-white"
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+              />
+            </div>
+          </div>
+
+          {/* Terminal / Process Logs Drawer */}
+          {showLogs && (
+            <div className="h-44 border-t border-slate-800 bg-[#060a10] flex flex-col font-mono text-[10px]">
+              <div className="p-1.5 border-b border-slate-800 flex items-center justify-between text-slate-400 px-3">
+                <span className="font-bold">Streaming Terminal / Server Logs</span>
+                <button onClick={() => setLogs([])} className="hover:text-white">
+                  Bersihkan
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 text-slate-300 space-y-0.5">
+                {logs.length === 0 ? (
+                  <div className="text-slate-600 italic">Menunggu log dari server...</div>
+                ) : (
+                  logs.map((l, i) => <div key={i}>{l}</div>)
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+      {/* Security Pre-Flight Audit Modal */}
+      {/* AI Provider Settings Modal */}
+      <AIProviderSettingsModal
+        isOpen={isAISettingsOpen}
+        onClose={() => setIsAISettingsOpen(false)}
+      />
+
+      <SecurityCheckModal
+        isOpen={isSecurityModalOpen}
+        onClose={() => setIsSecurityModalOpen(false)}
+        report={securityReport}
+        isLoading={isLoadingSecurity}
+        onConfirmDeploy={async () => {
+          setIsSecurityModalOpen(false);
+          await handleTriggerDeploy();
+        }}
+        isDeploying={isDeploying}
+      />
+    </div>
+  );
+}
