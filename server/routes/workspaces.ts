@@ -97,6 +97,7 @@ function formatProjectName(rawName: string, repoUrl?: string): string {
 }
 
 const customProjectsFile = path.join(process.cwd(), 'projects.json');
+const removedProjectsFile = path.join(process.cwd(), 'removed_projects.json');
 
 function loadCustomProjects(): string[] {
   if (fs.existsSync(customProjectsFile)) {
@@ -115,6 +116,23 @@ function saveCustomProjects(paths: string[]) {
   } catch {}
 }
 
+function loadRemovedProjects(): string[] {
+  if (fs.existsSync(removedProjectsFile)) {
+    try {
+      return JSON.parse(fs.readFileSync(removedProjectsFile, 'utf-8'));
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function saveRemovedProjects(paths: string[]) {
+  try {
+    fs.writeFileSync(removedProjectsFile, JSON.stringify(paths, null, 2), 'utf-8');
+  } catch {}
+}
+
 router.get('/', (req: Request, res: Response) => {
   const isWindows = process.platform === 'win32';
   const defaultRoot = isWindows ? path.join(os.homedir(), 'artastudio-workspaces') : '/home/chusni/orca/workspaces';
@@ -123,6 +141,7 @@ router.get('/', (req: Request, res: Response) => {
   const repos: RepoProject[] = [];
 
   const scannedPaths = new Set<string>();
+  const removedList = loadRemovedProjects().map(p => path.resolve(p));
 
   // 1. Scan default workspaces directory
   try {
@@ -176,14 +195,17 @@ router.get('/', (req: Request, res: Response) => {
           const defaultPath = defaultBranch ? defaultBranch.path : orgPath;
           const framework = detectFramework(findPackageJsonRecursive(defaultPath));
 
-          repos.push({
-            id: top.name,
-            name: formatProjectName(top.name, repoUrl),
-            repoUrl: repoUrl || `https://github.com/chusni12/${top.name}.git`,
-            defaultPath,
-            framework,
-            branches,
-          });
+          // Pastikan tidak masuk daftar yang disembunyikan/dihapus user
+          if (!removedList.includes(path.resolve(defaultPath)) && !removedList.includes(path.resolve(orgPath))) {
+            repos.push({
+              id: top.name,
+              name: formatProjectName(top.name, repoUrl),
+              repoUrl: repoUrl || `https://github.com/chusni12/${top.name}.git`,
+              defaultPath,
+              framework,
+              branches,
+            });
+          }
         } else {
           // Top-level direct project (e.g. artastudio)
           const hasGit = fs.existsSync(path.join(orgPath, '.git'));
@@ -193,14 +215,16 @@ router.get('/', (req: Request, res: Response) => {
             const bName = getGitBranch(orgPath);
             const isCurrent = orgPath === currentPath;
 
-            repos.push({
-              id: top.name,
-              name: formatProjectName(top.name, url),
-              repoUrl: url || `https://github.com/chusni12/${top.name}.git`,
-              defaultPath: orgPath,
-              framework: detectFramework(foundPkg),
-              branches: [{ name: bName, path: orgPath, isCurrent }],
-            });
+            if (!removedList.includes(path.resolve(orgPath))) {
+              repos.push({
+                id: top.name,
+                name: formatProjectName(top.name, url),
+                repoUrl: url || `https://github.com/chusni12/${top.name}.git`,
+                defaultPath: orgPath,
+                framework: detectFramework(foundPkg),
+                branches: [{ name: bName, path: orgPath, isCurrent }],
+              });
+            }
           }
         }
       }
@@ -212,7 +236,7 @@ router.get('/', (req: Request, res: Response) => {
   // 2. Scan custom user projects from projects.json
   const customProjects = loadCustomProjects();
   for (const cPath of customProjects) {
-    if (fs.existsSync(cPath) && !scannedPaths.has(cPath)) {
+    if (fs.existsSync(cPath) && !scannedPaths.has(cPath) && !removedList.includes(path.resolve(cPath))) {
       scannedPaths.add(cPath);
       const cName = path.basename(cPath);
       const url = getGitRemoteUrl(cPath);
@@ -220,7 +244,6 @@ router.get('/', (req: Request, res: Response) => {
       const foundPkg = findPackageJsonRecursive(cPath);
       const isCurrent = cPath === currentPath;
 
-      // Check if already in repos list
       if (!repos.some((r) => r.defaultPath === cPath || r.branches.some((b) => b.path === cPath))) {
         repos.push({
           id: `custom/${cName}`,
@@ -234,9 +257,9 @@ router.get('/', (req: Request, res: Response) => {
     }
   }
 
-  // 3. Ensure current working directory project is included
+  // 3. Ensure current working directory project is included if not hidden
   const hasCurrentInBranches = repos.some((r) => r.branches.some((b) => b.isCurrent || b.path === currentPath));
-  if (!hasCurrentInBranches) {
+  if (!hasCurrentInBranches && !removedList.includes(path.resolve(currentPath))) {
     const currentName = path.basename(currentPath);
     const url = getGitRemoteUrl(currentPath);
     const bName = getGitBranch(currentPath);
@@ -264,6 +287,11 @@ router.post('/add', async (req: Request, res: Response) => {
         return res.status(400).json({ success: false, error: 'Direktori folder lokal tidak ditemukan di sistem' });
       }
       const absPath = path.resolve(localPath);
+      
+      // Hapus dari daftar removed jika sebelumnya pernah disembunyikan
+      const removed = loadRemovedProjects().filter(p => path.resolve(p) !== absPath);
+      saveRemovedProjects(removed);
+
       const custom = loadCustomProjects();
       if (!custom.includes(absPath)) {
         custom.push(absPath);
@@ -298,6 +326,10 @@ router.post('/add', async (req: Request, res: Response) => {
 
       execFileSync('git', ['clone', gitUrl, targetPath], { stdio: 'inherit' });
 
+      // Hapus dari daftar removed jika sebelumnya pernah dihapus
+      const removed = loadRemovedProjects().filter(p => path.resolve(p) !== path.resolve(targetPath));
+      saveRemovedProjects(removed);
+
       const custom = loadCustomProjects();
       if (!custom.includes(targetPath)) {
         custom.push(targetPath);
@@ -313,7 +345,6 @@ router.post('/add', async (req: Request, res: Response) => {
   }
 });
 
-
 router.post('/remove', async (req: Request, res: Response) => {
   const { projectPath } = req.body || {};
   if (!projectPath) {
@@ -321,9 +352,20 @@ router.post('/remove', async (req: Request, res: Response) => {
   }
 
   try {
+    const absPath = path.resolve(projectPath);
+
+    // 1. Hapus dari custom projects
     const custom = loadCustomProjects();
-    const updated = custom.filter((p) => path.resolve(p) !== path.resolve(projectPath));
-    saveCustomProjects(updated);
+    const updatedCustom = custom.filter((p) => path.resolve(p) !== absPath);
+    saveCustomProjects(updatedCustom);
+
+    // 2. Tambahkan ke removed projects list agar tidak di-scan ulang otomatis
+    const removed = loadRemovedProjects();
+    if (!removed.map(p => path.resolve(p)).includes(absPath)) {
+      removed.push(absPath);
+      saveRemovedProjects(removed);
+    }
+
     return res.json({ success: true, message: 'Proyek berhasil dilepas dari daftar' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });

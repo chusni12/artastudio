@@ -384,7 +384,7 @@ export default function App() {
     const projectSessionId = `ws_${repo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
     fetchChatHistory(projectSessionId);
 
-    // 2. Isolasi Dev Server & Preview: Cek apakah dev-server proyek ini sedang menyala
+    // 2. Isolasi Dev Server & Preview: Cek status atau OTOMATIS NYALAKAN DEV SERVER!
     try {
       const statusRes = await fetch(`/api/process/status?projectPath=${encodeURIComponent(targetPath)}`);
       const statusData = await statusRes.json();
@@ -395,7 +395,21 @@ export default function App() {
           return;
         }
       } else {
-        setDevStatus({ projectPath: targetPath, status: 'stopped' });
+        // Otomatis Nyalakan Dev Server di Background tanpa klik tombol!
+        const idLower = (repo.name || repo.id || '').toLowerCase();
+        const autoPort = idLower.includes('artaloka') ? 5199 : idLower.includes('tahqiq') ? 3000 : 5173;
+        
+        fetch('/api/process/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectPath: targetPath, port: autoPort }),
+        }).then(r => r.json()).then(startData => {
+          if (startData.status || startData.instance) {
+            const inst = startData.status || startData.instance;
+            setDevStatus(inst);
+            if (inst.url) setPreviewUrl(inst.url);
+          }
+        }).catch(() => {});
       }
     } catch(e) {}
 
@@ -624,27 +638,24 @@ export default function App() {
             )}
           </div>
 
-          {/* Dev Server toggle */}
-          <button
-            onClick={handleToggleDevServer}
-            disabled={isStartingDev}
-            className={`text-xs px-3 py-1.5 rounded-md font-medium border transition-all flex items-center gap-1.5 ${
+          {/* Dev Server Auto-Status Indicator */}
+          <div
+            className={`text-xs px-3 py-1.5 rounded-md font-medium border flex items-center gap-1.5 ${
               devStatus?.status === 'running'
-                ? 'bg-emerald-950/40 border-emerald-600/60 text-emerald-300 hover:bg-emerald-900/50'
-                : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700/60'
+                ? 'bg-emerald-950/40 border-emerald-600/60 text-emerald-300'
+                : 'bg-slate-800/60 border-slate-700 text-slate-400'
             }`}
+            title={devStatus?.status === 'running' ? `Server dev aktif di ${devStatus.url || 'port'}` : 'Memulai server dev otomatis...'}
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                devStatus?.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                devStatus?.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'
               }`}
             />
-            {isStartingDev
-              ? 'Memproses...'
-              : devStatus?.status === 'running'
-              ? 'Server Aktif'
-              : 'Jalankan Dev'}
-          </button>
+            <span className="font-mono text-[11px]">
+              {devStatus?.status === 'running' ? `Port :${devStatus.port || (devStatus.url ? devStatus.url.split(':')[2] : 'Aktif')}` : 'Auto-Starting...'}
+            </span>
+          </div>
 
           {/* WebSocket Badge */}
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] border border-slate-800 bg-slate-900/50">
