@@ -208,6 +208,21 @@ export default function App() {
           return [...prev, msg];
         });
       }
+    } else if (payload.channel === 'process') {
+      if (payload.event === 'status_change') {
+        const procData = payload.data as any;
+        if (procData && procData.projectPath === (selectedBranchPath || selectedRepo?.defaultPath)) {
+          setDevStatus(procData);
+          if (procData.url) {
+            setPreviewUrl(procData.url);
+          }
+        }
+      }
+    } else if (payload.channel === 'logs') {
+      if (payload.event === 'log:new' && payload.data) {
+        const msg = (payload.data as any).message;
+        if (msg) setLogs((prev) => [...prev.slice(-300), msg]);
+      }
     } else if (payload.channel === 'system') {
       if (payload.event === 'deploy:started') {
         setIsDeploying(true);
@@ -256,12 +271,20 @@ export default function App() {
   };
 
   const updatePreviewUrl = (repo: RepoProject, targetPath: string) => {
-    if (
-      repo.name.toLowerCase().includes('bowhead') ||
-      targetPath.includes('bowhead') ||
-      repo.id.includes('artaloka')
-    ) {
+    // 1. Jika ada server dev aktif untuk path ini, utamakan URL servernya!
+    if (devStatus && devStatus.projectPath === targetPath && devStatus.url && devStatus.status === 'running') {
+      setPreviewUrl(devStatus.url);
+      return;
+    }
+
+    // 2. Default mapping berdasarkan framework & port proyek
+    const id = (repo.name || repo.id || '').toLowerCase();
+    if (id.includes('artaloka') || targetPath.includes('bowhead')) {
       setPreviewUrl('http://localhost:5199');
+    } else if (id.includes('tahqiq')) {
+      setPreviewUrl('http://localhost:3000');
+    } else if (id.includes('studio')) {
+      setPreviewUrl('http://localhost:5173');
     } else {
       setPreviewUrl('http://localhost:5173');
     }
@@ -400,11 +423,14 @@ export default function App() {
           setDevStatus({ projectPath: selectedWorkspace.path, status: 'stopped' });
         }
       } else {
-        const portToUse = selectedWorkspace.path.includes('bowhead') ? 5199 : 5173;
+        const targetPath = selectedBranchPath || selectedRepo?.defaultPath || '';
+        const idLower = (selectedRepo?.name || '').toLowerCase();
+        const portToUse = idLower.includes('artaloka') ? 5199 : idLower.includes('tahqiq') ? 3000 : 5173;
+        
         const res = await fetch('/api/process/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectPath: selectedWorkspace.path, port: portToUse }),
+          body: JSON.stringify({ projectPath: targetPath, port: portToUse }),
         });
         const data = await res.json();
         const instance = data.instance || data.status;
@@ -784,9 +810,29 @@ export default function App() {
                           {repo.name}
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 border border-slate-700/60 shrink-0">
-                        {repo.framework}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 border border-slate-700/60">
+                          {repo.framework}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (confirm(`Hapus ${repo.name} dari daftar proyek ArtaStudio? (Berkas fisik tidak dihapus)`)) {
+                              await fetch('/api/workspaces/remove', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ projectPath: repo.defaultPath }),
+                              });
+                              fetchWorkspaces();
+                            }
+                          }}
+                          title="Hapus / Lepas dari daftar proyek"
+                          className="text-slate-500 hover:text-red-400 hover:bg-slate-800 p-0.5 rounded transition-colors text-xs"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
 
                     {/* Subtitle: Repo URL */}

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import os from 'node:os';
+import { execSync, execFileSync } from 'node:child_process';
 import type { RepoProject, RepoBranch } from '../../shared/types';
 
 const router = Router();
@@ -39,9 +40,26 @@ function getGitBranch(dirPath: string): string {
   return path.basename(dirPath);
 }
 
-function detectFramework(pkgPath: string): string {
+function findPackageJsonRecursive(dir: string, maxDepth: number = 2): string | null {
+  const direct = path.join(dir, 'package.json');
+  if (fs.existsSync(direct)) return direct;
+  if (maxDepth <= 0) return null;
+
   try {
-    if (!fs.existsSync(pkgPath)) return 'unknown';
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+        const sub = path.join(dir, entry.name, 'package.json');
+        if (fs.existsSync(sub)) return sub;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function detectFramework(pkgPath: string | null): string {
+  try {
+    if (!pkgPath || !fs.existsSync(pkgPath)) return 'unknown';
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
     if (deps['@tanstack/react-start']) return 'TanStack Start';
@@ -78,137 +96,6 @@ function formatProjectName(rawName: string, repoUrl?: string): string {
     .join(' ');
 }
 
-router.get('/', (req: Request, res: Response) => {
-  const rootWorkspaces = '/home/chusni/orca/workspaces';
-  const currentPath = process.cwd();
-  const repos: RepoProject[] = [];
-
-  try {
-    if (fs.existsSync(rootWorkspaces)) {
-      const topEntries = fs.readdirSync(rootWorkspaces, { withFileTypes: true });
-
-      for (const top of topEntries) {
-        if (!top.isDirectory() || top.name.startsWith('.')) continue;
-        const orgPath = path.join(rootWorkspaces, top.name);
-        const subEntries = fs.readdirSync(orgPath, { withFileTypes: true });
-
-        const branches: RepoBranch[] = [];
-        let repoUrl = '';
-
-        for (const sub of subEntries) {
-          if (!sub.isDirectory() || sub.name.startsWith('.')) continue;
-          const subPath = path.join(orgPath, sub.name);
-          const hasGit = fs.existsSync(path.join(subPath, '.git'));
-          const pkgPath = path.join(subPath, 'package.json');
-
-          if (hasGit || fs.existsSync(pkgPath)) {
-            const url = getGitRemoteUrl(subPath);
-            if (url && !repoUrl) repoUrl = url;
-            const bName = getGitBranch(subPath);
-            const isCurrent = subPath === currentPath;
-
-            branches.push({
-              name: bName,
-              path: subPath,
-              isCurrent,
-            });
-          }
-        }
-
-        if (branches.length > 0) {
-          // Sort branches: current first, then bowhead, then main/master, then alphabetical
-          branches.sort((a, b) => {
-            if (a.isCurrent) return -1;
-            if (b.isCurrent) return 1;
-            if (a.name === 'bowhead') return -1;
-            if (b.name === 'bowhead') return 1;
-            if (a.name === 'main' || a.name === 'master') return -1;
-            if (b.name === 'main' || b.name === 'master') return 1;
-            return a.name.localeCompare(b.name);
-          });
-
-          // Preferred default path: bowhead, or isCurrent, or first branch
-          const defaultBranch =
-            branches.find((b) => b.name === 'bowhead') ||
-            branches.find((b) => b.isCurrent) ||
-            branches[0];
-          const defaultPath = defaultBranch ? defaultBranch.path : orgPath;
-          const framework = detectFramework(path.join(defaultPath, 'package.json'));
-
-          repos.push({
-            id: top.name,
-            name: formatProjectName(top.name, repoUrl),
-            repoUrl: repoUrl || `https://github.com/chusni12/${top.name}.git`,
-            defaultPath,
-            framework,
-            branches,
-          });
-        } else {
-          // Top-level direct project (e.g. artastudio)
-          const hasGit = fs.existsSync(path.join(orgPath, '.git'));
-          const pkgPath = path.join(orgPath, 'package.json');
-          if (hasGit || fs.existsSync(pkgPath)) {
-            const url = getGitRemoteUrl(orgPath);
-            const bName = getGitBranch(orgPath);
-            const isCurrent = orgPath === currentPath;
-
-            repos.push({
-              id: top.name,
-              name: formatProjectName(top.name, url),
-              repoUrl: url || `https://github.com/chusni12/${top.name}.git`,
-              defaultPath: orgPath,
-              framework: detectFramework(pkgPath),
-              branches: [{ name: bName, path: orgPath, isCurrent }],
-            });
-          }
-        }
-      }
-    }
-  } catch (err: any) {
-    console.error('[Workspaces] Scan error:', err);
-  }
-
-  // Ensure current project is included if not found
-  const hasCurrentInBranches = repos.some((r) => r.branches.some((b) => b.isCurrent || b.path === currentPath));
-  if (!hasCurrentInBranches) {
-    const currentName = path.basename(currentPath);
-    const url = getGitRemoteUrl(currentPath);
-    const bName = getGitBranch(currentPath);
-    const pkgPath = path.join(currentPath, 'package.json');
-
-    repos.unshift({
-      id: `current/${currentName}`,
-      name: formatProjectName(currentName, url),
-      repoUrl: url || `https://github.com/chusni12/${currentName}.git`,
-      defaultPath: currentPath,
-      framework: detectFramework(pkgPath),
-      branches: [{ name: bName, path: currentPath, isCurrent: true }],
-    });
-  }
-
-  res.json({ success: true, count: repos.length, workspaces: repos, repos });
-});
-
-router.get('/current', (req: Request, res: Response) => {
-  const currentPath = process.cwd();
-  const currentName = path.basename(currentPath);
-  const pkgPath = path.join(currentPath, 'package.json');
-  const url = getGitRemoteUrl(currentPath);
-  const bName = getGitBranch(currentPath);
-
-  const currentRepo: RepoProject = {
-    id: `current/${currentName}`,
-    name: formatProjectName(currentName, url),
-    repoUrl: url || `https://github.com/chusni12/${currentName}.git`,
-    defaultPath: currentPath,
-    framework: detectFramework(pkgPath),
-    branches: [{ name: bName, path: currentPath, isCurrent: true }],
-  };
-
-  res.json({ success: true, workspace: currentRepo, repo: currentRepo });
-});
-
-
 const customProjectsFile = path.join(process.cwd(), 'projects.json');
 
 function loadCustomProjects(): string[] {
@@ -227,6 +114,146 @@ function saveCustomProjects(paths: string[]) {
     fs.writeFileSync(customProjectsFile, JSON.stringify(paths, null, 2), 'utf-8');
   } catch {}
 }
+
+router.get('/', (req: Request, res: Response) => {
+  const isWindows = process.platform === 'win32';
+  const defaultRoot = isWindows ? path.join(os.homedir(), 'artastudio-workspaces') : '/home/chusni/orca/workspaces';
+  const rootWorkspaces = process.env.WORKSPACES_ROOT || defaultRoot;
+  const currentPath = process.cwd();
+  const repos: RepoProject[] = [];
+
+  const scannedPaths = new Set<string>();
+
+  // 1. Scan default workspaces directory
+  try {
+    if (fs.existsSync(rootWorkspaces)) {
+      const topEntries = fs.readdirSync(rootWorkspaces, { withFileTypes: true });
+
+      for (const top of topEntries) {
+        if (!top.isDirectory() || top.name.startsWith('.')) continue;
+        const orgPath = path.join(rootWorkspaces, top.name);
+        scannedPaths.add(orgPath);
+        const subEntries = fs.readdirSync(orgPath, { withFileTypes: true });
+
+        const branches: RepoBranch[] = [];
+        let repoUrl = '';
+
+        for (const sub of subEntries) {
+          if (!sub.isDirectory() || sub.name.startsWith('.')) continue;
+          const subPath = path.join(orgPath, sub.name);
+          const hasGit = fs.existsSync(path.join(subPath, '.git'));
+          const foundPkg = findPackageJsonRecursive(subPath);
+
+          if (hasGit || foundPkg) {
+            const url = getGitRemoteUrl(subPath);
+            if (url && !repoUrl) repoUrl = url;
+            const bName = getGitBranch(subPath);
+            const isCurrent = subPath === currentPath;
+
+            branches.push({
+              name: bName,
+              path: subPath,
+              isCurrent,
+            });
+          }
+        }
+
+        if (branches.length > 0) {
+          branches.sort((a, b) => {
+            if (a.isCurrent) return -1;
+            if (b.isCurrent) return 1;
+            if (a.name === 'bowhead') return -1;
+            if (b.name === 'bowhead') return 1;
+            if (a.name === 'main' || a.name === 'master') return -1;
+            if (b.name === 'main' || b.name === 'master') return 1;
+            return a.name.localeCompare(b.name);
+          });
+
+          const defaultBranch =
+            branches.find((b) => b.name === 'bowhead') ||
+            branches.find((b) => b.isCurrent) ||
+            branches[0];
+          const defaultPath = defaultBranch ? defaultBranch.path : orgPath;
+          const framework = detectFramework(findPackageJsonRecursive(defaultPath));
+
+          repos.push({
+            id: top.name,
+            name: formatProjectName(top.name, repoUrl),
+            repoUrl: repoUrl || `https://github.com/chusni12/${top.name}.git`,
+            defaultPath,
+            framework,
+            branches,
+          });
+        } else {
+          // Top-level direct project (e.g. artastudio)
+          const hasGit = fs.existsSync(path.join(orgPath, '.git'));
+          const foundPkg = findPackageJsonRecursive(orgPath);
+          if (hasGit || foundPkg) {
+            const url = getGitRemoteUrl(orgPath);
+            const bName = getGitBranch(orgPath);
+            const isCurrent = orgPath === currentPath;
+
+            repos.push({
+              id: top.name,
+              name: formatProjectName(top.name, url),
+              repoUrl: url || `https://github.com/chusni12/${top.name}.git`,
+              defaultPath: orgPath,
+              framework: detectFramework(foundPkg),
+              branches: [{ name: bName, path: orgPath, isCurrent }],
+            });
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('[Workspaces] Scan error:', err);
+  }
+
+  // 2. Scan custom user projects from projects.json
+  const customProjects = loadCustomProjects();
+  for (const cPath of customProjects) {
+    if (fs.existsSync(cPath) && !scannedPaths.has(cPath)) {
+      scannedPaths.add(cPath);
+      const cName = path.basename(cPath);
+      const url = getGitRemoteUrl(cPath);
+      const bName = getGitBranch(cPath);
+      const foundPkg = findPackageJsonRecursive(cPath);
+      const isCurrent = cPath === currentPath;
+
+      // Check if already in repos list
+      if (!repos.some((r) => r.defaultPath === cPath || r.branches.some((b) => b.path === cPath))) {
+        repos.push({
+          id: `custom/${cName}`,
+          name: formatProjectName(cName, url),
+          repoUrl: url || `Local: ${cPath}`,
+          defaultPath: cPath,
+          framework: detectFramework(foundPkg),
+          branches: [{ name: bName, path: cPath, isCurrent }],
+        });
+      }
+    }
+  }
+
+  // 3. Ensure current working directory project is included
+  const hasCurrentInBranches = repos.some((r) => r.branches.some((b) => b.isCurrent || b.path === currentPath));
+  if (!hasCurrentInBranches) {
+    const currentName = path.basename(currentPath);
+    const url = getGitRemoteUrl(currentPath);
+    const bName = getGitBranch(currentPath);
+    const foundPkg = findPackageJsonRecursive(currentPath);
+
+    repos.unshift({
+      id: `current/${currentName}`,
+      name: formatProjectName(currentName, url),
+      repoUrl: url || `https://github.com/chusni12/${currentName}.git`,
+      defaultPath: currentPath,
+      framework: detectFramework(foundPkg),
+      branches: [{ name: bName, path: currentPath, isCurrent: true }],
+    });
+  }
+
+  res.json({ success: true, count: repos.length, workspaces: repos, repos });
+});
 
 router.post('/add', async (req: Request, res: Response) => {
   const { mode, localPath, gitUrl, folderName } = req.body || {};
@@ -250,7 +277,14 @@ router.post('/add', async (req: Request, res: Response) => {
         return res.status(400).json({ success: false, error: 'URL Git tidak valid' });
       }
 
-      const rootWorkspaces = '/home/chusni/orca/workspaces';
+      const isWindows = process.platform === 'win32';
+      const defaultRoot = isWindows ? path.join(os.homedir(), 'artastudio-workspaces') : '/home/chusni/orca/workspaces';
+      const rootWorkspaces = process.env.WORKSPACES_ROOT || defaultRoot;
+
+      if (!fs.existsSync(rootWorkspaces)) {
+        fs.mkdirSync(rootWorkspaces, { recursive: true });
+      }
+
       let dirName = folderName;
       if (!dirName) {
         const match = gitUrl.match(/\/([^/]+?)(?:\.git)?$/);
@@ -259,10 +293,10 @@ router.post('/add', async (req: Request, res: Response) => {
 
       const targetPath = path.join(rootWorkspaces, dirName);
       if (fs.existsSync(targetPath)) {
-        return res.status(400).json({ success: false, error: `Folder target ${dirName} sudah ada di workspaces!` });
+        return res.status(400).json({ success: false, error: `Folder target ${dirName} sudah ada!` });
       }
 
-      execSync(`git clone ${gitUrl} "${targetPath}"`, { stdio: 'inherit' });
+      execFileSync('git', ['clone', gitUrl, targetPath], { stdio: 'inherit' });
 
       const custom = loadCustomProjects();
       if (!custom.includes(targetPath)) {
@@ -276,6 +310,23 @@ router.post('/add', async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'Mode tidak didukung' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'Gagal menambahkan proyek' });
+  }
+});
+
+
+router.post('/remove', async (req: Request, res: Response) => {
+  const { projectPath } = req.body || {};
+  if (!projectPath) {
+    return res.status(400).json({ success: false, error: 'projectPath wajib diisi' });
+  }
+
+  try {
+    const custom = loadCustomProjects();
+    const updated = custom.filter((p) => path.resolve(p) !== path.resolve(projectPath));
+    saveCustomProjects(updated);
+    return res.json({ success: true, message: 'Proyek berhasil dilepas dari daftar' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
