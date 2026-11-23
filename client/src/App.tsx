@@ -29,6 +29,9 @@ import {
   GitCommit,
   GitBranch,
   FileCode,
+  Monitor,
+  Tablet,
+  Smartphone,
 } from 'lucide-react';
 import type {
   RepoProject,
@@ -1173,13 +1176,6 @@ export default function App() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-extrabold text-base tracking-tight text-white">ArtaStudio</span>
-                  <button
-                    onClick={() => setIsProjectHubOpen(true)}
-                    title="Buka Pusat Pengaturan Proyek & Layanan Cloud (Lainnya)"
-                    className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-md bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-                  >
-                    <span>⚙️ Lainnya</span>
-                  </button>
                 </div>
                 <p className="text-[11px] text-slate-400 hidden sm:block">AI Web Development Suite</p>
               </div>
@@ -1667,38 +1663,59 @@ export default function App() {
 
               {/* Viewport Top Toolbar */}
               <div className="h-10 border-b border-slate-800/60 px-3 flex items-center justify-between bg-slate-900/60">
-                {/* Device Mode Switcher */}
-                <div className="flex items-center gap-1 bg-slate-950/80 p-0.5 rounded-md border border-slate-800">
+                {/* Left Preview Controls: Project Settings + Device Mode Switcher */}
+                <div className="flex items-center gap-2">
+                  {/* Tombol Pengaturan Cloud Proyek Ini */}
                   <button
-                    onClick={() => setViewportMode('desktop')}
-                    className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
-                      viewportMode === 'desktop'
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                    onClick={() => setIsProjectHubOpen(true)}
+                    title="Pengaturan Cloud Proyek Ini"
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-950/80 hover:bg-slate-800 text-slate-300 hover:text-amber-400 border border-slate-800 hover:border-slate-700 text-xs font-medium transition-all shadow-sm group cursor-pointer"
                   >
-                    Desktop
+                    <Settings className="w-3.5 h-3.5 text-amber-400 transition-transform duration-300 group-hover:rotate-45" />
+                    <span className="text-[11px] font-semibold text-slate-200 group-hover:text-amber-400">Lainnya</span>
                   </button>
-                  <button
-                    onClick={() => setViewportMode('tablet')}
-                    className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
-                      viewportMode === 'tablet'
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    Tablet (768px)
-                  </button>
-                  <button
-                    onClick={() => setViewportMode('mobile')}
-                    className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
-                      viewportMode === 'mobile'
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    Mobile (375px)
-                  </button>
+
+                  <div className="h-4 w-px bg-slate-800/80" />
+
+                  {/* Device Mode Switcher (Minimalist icons ala Lovable) */}
+                  <div className="flex items-center gap-0.5 bg-slate-950/80 p-0.5 rounded-md border border-slate-800">
+                    <button
+                      onClick={() => setViewportMode('desktop')}
+                      className={`p-1.5 rounded transition-all cursor-pointer ${
+                        viewportMode === 'desktop'
+                          ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                      title="Desktop / Monitor"
+                      aria-label="Desktop View"
+                    >
+                      <Monitor className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setViewportMode('tablet')}
+                      className={`p-1.5 rounded transition-all cursor-pointer ${
+                        viewportMode === 'tablet'
+                          ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                      title="Tablet (768px)"
+                      aria-label="Tablet View"
+                    >
+                      <Tablet className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setViewportMode('mobile')}
+                      className={`p-1.5 rounded transition-all cursor-pointer ${
+                        viewportMode === 'mobile'
+                          ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                      title="Mobile / HP (375px)"
+                      aria-label="Mobile View"
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Route Navigator Dropdown */}
@@ -1851,6 +1868,7 @@ export default function App() {
         isOpen={isProjectHubOpen}
         onClose={() => setIsProjectHubOpen(false)}
         selectedRepo={selectedRepo}
+        activeBranchPath={selectedBranchPath || selectedRepo?.defaultPath}
         securityReport={securityReport}
         onOpenSecurityAudit={handleOpenSecurityAudit}
         logs={logs}

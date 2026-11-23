@@ -284,6 +284,88 @@ router.get('/', (req: Request, res: Response) => {
   res.json({ success: true, count: repos.length, workspaces: repos, repos });
 });
 
+router.get('/seo-status', (req: Request, res: Response) => {
+  const targetPath = (req.query.projectPath as string) || process.cwd();
+  if (!fs.existsSync(targetPath)) {
+    return res.status(404).json({ success: false, error: 'Target directory not found' });
+  }
+
+  // Check robots.txt in possible locations
+  const robotsCandidates = [
+    path.join(targetPath, 'public', 'robots.txt'),
+    path.join(targetPath, 'client', 'public', 'robots.txt'),
+    path.join(targetPath, '.output', 'public', 'robots.txt'),
+    path.join(targetPath, 'robots.txt'),
+  ];
+  let robotsFile: string | null = null;
+  let robotsPreview = '';
+  for (const cand of robotsCandidates) {
+    if (fs.existsSync(cand)) {
+      robotsFile = cand;
+      try {
+        robotsPreview = fs.readFileSync(cand, 'utf-8').slice(0, 300);
+      } catch {}
+      break;
+    }
+  }
+
+  // Check sitemap in possible locations
+  const sitemapCandidates = [
+    { p: path.join(targetPath, 'public', 'sitemap.xml'), type: 'static' },
+    { p: path.join(targetPath, 'src', 'routes', 'sitemap[.]xml.ts'), type: 'dynamic' },
+    { p: path.join(targetPath, 'src', 'routes', 'sitemap.xml.ts'), type: 'dynamic' },
+    { p: path.join(targetPath, 'src', 'lib', 'seo', 'sitemapGenerator.ts'), type: 'generator' },
+    { p: path.join(targetPath, 'src', 'lib', 'sitemap.ts'), type: 'generator' },
+    { p: path.join(targetPath, '.output', 'public', 'sitemap.xml'), type: 'static' },
+    { p: path.join(targetPath, 'sitemap.xml'), type: 'static' },
+  ];
+  let sitemapFile: string | null = null;
+  let sitemapType = '';
+  for (const cand of sitemapCandidates) {
+    if (fs.existsSync(cand.p)) {
+      sitemapFile = cand.p;
+      sitemapType = cand.type;
+      break;
+    }
+  }
+
+  // Check HTML / metadata basics
+  let hasMeta = false;
+  let pageTitle = '';
+  const htmlCandidates = [
+    path.join(targetPath, 'index.html'),
+    path.join(targetPath, 'client', 'index.html'),
+    path.join(targetPath, 'src', 'routes', '__root.tsx'),
+  ];
+  for (const cand of htmlCandidates) {
+    if (fs.existsSync(cand)) {
+      try {
+        const content = fs.readFileSync(cand, 'utf-8');
+        if (content.includes('<title>') || content.includes('title:') || content.includes('meta')) {
+          hasMeta = true;
+          const match = content.match(/<title>([^<]+)<\/title>/);
+          if (match) pageTitle = match[1];
+        }
+      } catch {}
+      break;
+    }
+  }
+
+  return res.json({
+    success: true,
+    projectPath: targetPath,
+    hasRobots: !!robotsFile,
+    robotsRelPath: robotsFile ? path.relative(targetPath, robotsFile) : null,
+    robotsPreview,
+    hasSitemap: !!sitemapFile,
+    sitemapRelPath: sitemapFile ? path.relative(targetPath, sitemapFile) : null,
+    sitemapType,
+    hasMeta,
+    pageTitle,
+    ssrReady: fs.existsSync(path.join(targetPath, 'src', 'routes')) || fs.existsSync(path.join(targetPath, 'app')),
+  });
+});
+
 router.post('/add', async (req: Request, res: Response) => {
   const { mode, localPath, gitUrl, folderName } = req.body || {};
 
