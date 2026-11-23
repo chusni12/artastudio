@@ -243,8 +243,8 @@ function saveRemovedProjects(paths: string[]) {
 
 router.get('/', (req: Request, res: Response) => {
   const isWindows = process.platform === 'win32';
-  const defaultRoot = isWindows ? path.join(os.homedir(), 'artastudio-workspaces') : '/root/workspaces';
-  const rootWorkspaces = process.env.WORKSPACES_ROOT || defaultRoot;
+  const defaultRoot = path.join(os.homedir(), 'artastudio-workspaces');
+  const rootWorkspaces = process.env.WORKSPACES_ROOT || (fs.existsSync('/home/chusni/orca/workspaces') ? '/home/chusni/orca/workspaces' : defaultRoot);
   const currentPath = process.cwd();
   const repos: RepoProject[] = [];
 
@@ -501,8 +501,8 @@ router.post('/add', async (req: Request, res: Response) => {
       }
 
       const isWindows = process.platform === 'win32';
-      const defaultRoot = isWindows ? path.join(os.homedir(), 'artastudio-workspaces') : '/root/workspaces';
-      const rootWorkspaces = process.env.WORKSPACES_ROOT || defaultRoot;
+      const defaultRoot = path.join(os.homedir(), 'artastudio-workspaces');
+      const rootWorkspaces = process.env.WORKSPACES_ROOT || (fs.existsSync('/home/chusni/orca/workspaces') ? '/home/chusni/orca/workspaces' : defaultRoot);
 
       if (!fs.existsSync(rootWorkspaces)) {
         fs.mkdirSync(rootWorkspaces, { recursive: true });
