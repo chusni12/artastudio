@@ -403,10 +403,10 @@ export async function detectDevPort(
 
 /**
  * Scans directories in rootPath to discover workspace projects.
- * Default rootPath is '/home/chusni/orca/workspaces'.
+ * Default rootPath is process.env.WORKSPACES_ROOT || '/root/workspaces'.
  */
 export async function scanWorkspaces(
-  rootPath: string = '/home/chusni/orca/workspaces',
+  rootPath: string = process.env.WORKSPACES_ROOT || '/root/workspaces',
   options: WorkspaceScanOptions = {}
 ): Promise<ProjectInfo[]> {
   const resolvedRoot = path.resolve(rootPath);
@@ -537,7 +537,7 @@ export async function scanWorkspaces(
  */
 export async function findProjectDetail(
   idOrPath: string,
-  rootPath: string = '/home/chusni/orca/workspaces'
+  rootPath: string = process.env.WORKSPACES_ROOT || '/root/workspaces'
 ): Promise<ProjectDetail | null> {
   const projects = await scanWorkspaces(rootPath);
 
