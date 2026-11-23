@@ -1,3 +1,4 @@
+import { StudioProjectHubModal } from './components/StudioProjectHubModal';
 import { AIProviderSettingsModal } from './components/AIProviderSettingsModal';
 import { SecurityCheckModal } from './components/SecurityCheckModal';
 import type { SecurityAuditReport } from '../../shared/types';
@@ -66,6 +67,22 @@ export default function App() {
   const [showLogs, setShowLogs] = useState<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [isDeploying, setIsDeploying] = useState<boolean>(false);
+  const [isProjectHubOpen, setIsProjectHubOpen] = useState<boolean>(false);
+  const [selectedRoutePath, setSelectedRoutePath] = useState<string>('/');
+  const [isRouteDropdownOpen, setIsRouteDropdownOpen] = useState<boolean>(false);
+  const knownProjectRoutes = [
+    { label: 'Halaman Utama', path: '/' },
+    { label: 'Katalog Marketplace', path: '/marketplace' },
+    { label: 'Komisi Custom', path: '/commissions' },
+    { label: 'Ruang Seniman', path: '/ruang-seniman' },
+    { label: 'Pameran Seni (Galeri)', path: '/pameran-galeri' },
+    { label: 'Toko Arta & Reward', path: '/toko' },
+    { label: 'Profil Saya', path: '/profile' },
+    { label: 'Item Saya', path: '/item-saya' },
+    { label: 'Studio Paint (Draw)', path: '/studiopaint' },
+    { label: 'Bantuan & FAQ', path: '/pusat-bantuan' },
+    { label: 'Admin Dashboard', path: '/admin' },
+  ];
   const [isAISettingsOpen, setIsAISettingsOpen] = useState<boolean>(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
   const [securityReport, setSecurityReport] = useState<SecurityAuditReport | null>(null);
@@ -484,12 +501,11 @@ export default function App() {
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-base tracking-tight text-white">ArtaStudio</span>
               <button
-                onClick={() => setIsAISettingsOpen(true)}
-                title="Klik untuk atur AI (OpenCode Gratis / Custom API Key)"
-                className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                onClick={() => setIsProjectHubOpen(true)}
+                title="Buka Pusat Pengaturan Proyek & Layanan Cloud (Lainnya)"
+                className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-md bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
               >
-                <span>AI Suite</span>
-                <span className="text-[11px]">⚙️</span>
+                <span>⚙️ Lainnya</span>
               </button>
             </div>
             <p className="text-[11px] text-slate-400 hidden sm:block">AI Web Development Suite</p>
@@ -1033,21 +1049,56 @@ export default function App() {
               </button>
             </div>
 
-            {/* Address Bar */}
-            <div className="flex items-center gap-2 flex-1 max-w-xs mx-3">
-              <input
-                type="text"
-                value={previewUrl}
-                onChange={(e) => setPreviewUrl(e.target.value)}
-                className="w-full bg-slate-950 text-[11px] font-mono text-slate-300 border border-slate-800 rounded px-2 py-0.5 focus:outline-none focus:border-amber-500"
-              />
+            {/* Route Navigator Dropdown (Pengganti URL Kaku ala Lovable) */}
+            <div className="flex items-center gap-2 flex-1 max-w-sm mx-3 relative">
+              <div className="relative w-full">
+                <button
+                  onClick={() => setIsRouteDropdownOpen(!isRouteDropdownOpen)}
+                  className="w-full bg-slate-950 text-[11px] font-mono text-slate-200 border border-slate-800 rounded px-2.5 py-1 focus:outline-none hover:border-slate-700 flex items-center justify-between transition-colors shadow-inner"
+                >
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span className="text-amber-400 font-bold">📄</span>
+                    <span className="truncate">{knownProjectRoutes.find(r => r.path === selectedRoutePath)?.label || selectedRoutePath}</span>
+                    <span className="text-slate-500 text-[10px]">({selectedRoutePath})</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">▾</span>
+                </button>
+
+                {isRouteDropdownOpen && (
+                  <div className="absolute left-0 top-8 z-40 w-64 bg-[#0a0f19] border border-slate-800 rounded-lg shadow-2xl p-1 max-h-72 overflow-y-auto space-y-0.5 animate-in fade-in">
+                    {knownProjectRoutes.map((r) => (
+                      <button
+                        key={r.path}
+                        onClick={() => {
+                          setSelectedRoutePath(r.path);
+                          setIsRouteDropdownOpen(false);
+                          const base = previewUrl.split('/')[0] + '//' + previewUrl.split('/')[2];
+                          const target = `${base}${r.path}`;
+                          setPreviewUrl(target);
+                          const iframe = document.getElementById('preview-iframe') as HTMLIFrameElement;
+                          if (iframe) iframe.src = target;
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-colors ${
+                          selectedRoutePath === r.path
+                            ? 'bg-amber-500/15 text-amber-300 font-semibold border border-amber-500/30'
+                            : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+                        }`}
+                      >
+                        <span>{r.label}</span>
+                        <code className="text-[10px] font-mono text-slate-500">{r.path}</code>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={() => {
                   const iframe = document.getElementById('preview-iframe') as HTMLIFrameElement;
                   if (iframe) iframe.src = previewUrl;
                 }}
-                className="text-xs text-slate-400 hover:text-white p-1"
-                title="Muat Ulang"
+                className="text-xs text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800"
+                title="Muat Ulang Halaman"
               >
                 ↻
               </button>
@@ -1127,6 +1178,15 @@ export default function App() {
           // Otomatis switch ke tab chat jika di HP
           setMobileTab('chat');
         }}
+      />
+      {/* Studio Project Hub Modal (Lainnya) */}
+      <StudioProjectHubModal
+        isOpen={isProjectHubOpen}
+        onClose={() => setIsProjectHubOpen(false)}
+        selectedRepo={selectedRepo}
+        securityReport={securityReport}
+        onOpenSecurityAudit={handleOpenSecurityAudit}
+        logs={logs}
       />
     </div>
   );
