@@ -10,11 +10,12 @@ const router = Router();
 
 function getGitRemoteUrl(dirPath: string): string {
   try {
-    return execSync('git config --get remote.origin.url', {
+    const url = execSync('git config --get remote.origin.url', {
       cwd: dirPath,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'ignore'],
     }).trim();
+    return url ? url.replace(/https:\/\/[^@]+@github\.com\//, 'https://github.com/') : '';
   } catch {
     return '';
   }

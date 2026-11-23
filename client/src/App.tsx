@@ -33,6 +33,8 @@ export default function App() {
   const activeBranch =
     selectedRepo?.branches.find((b) => b.path === selectedBranchPath) ||
     selectedRepo?.branches.find((b) => b.isCurrent) ||
+    selectedRepo?.branches.find((b) => b.name === 'main') ||
+    selectedRepo?.branches.find((b) => b.name === 'master') ||
     selectedRepo?.branches.find((b) => b.name === 'bowhead') ||
     selectedRepo?.branches[0];
 
@@ -256,6 +258,8 @@ export default function App() {
             repoList.find((r) => r.branches.some((b) => b.isCurrent)) || repoList[0];
           const currentBranch =
             currentRepo.branches.find((b) => b.isCurrent) ||
+            currentRepo.branches.find((b) => b.name === 'main') ||
+            currentRepo.branches.find((b) => b.name === 'master') ||
             currentRepo.branches.find((b) => b.name === 'bowhead') ||
             currentRepo.branches[0];
           setSelectedRepo(currentRepo);
@@ -373,6 +377,8 @@ export default function App() {
     const targetBranch = branchPath
       ? repo.branches.find((b) => b.path === branchPath)
       : repo.branches.find((b) => b.isCurrent) ||
+        repo.branches.find((b) => b.name === 'main') ||
+        repo.branches.find((b) => b.name === 'master') ||
         repo.branches.find((b) => b.name === 'bowhead') ||
         repo.branches[0];
     const targetPath = targetBranch?.path || repo.defaultPath;
@@ -631,7 +637,7 @@ export default function App() {
               >
                 {selectedRepo.branches.map((b) => (
                   <option key={b.path} value={b.path}>
-                    {b.name}{b.isCurrent ? ' (aktif)' : b.name === 'bowhead' ? ' (default)' : ''}
+                    {b.name}{b.isCurrent ? ' (aktif)' : (b.name === 'main' || b.name === 'master') ? ' (default)' : ''}
                   </option>
                 ))}
               </select>
@@ -794,6 +800,8 @@ export default function App() {
                 const currentRepoBranch = isSelected
                   ? activeBranch
                   : repo.branches.find((b) => b.isCurrent) ||
+                    repo.branches.find((b) => b.name === 'main') ||
+                    repo.branches.find((b) => b.name === 'master') ||
                     repo.branches.find((b) => b.name === 'bowhead') ||
                     repo.branches[0];
 
@@ -904,7 +912,7 @@ export default function App() {
                               {repo.branches.map((b) => (
                                 <option key={b.path} value={b.path}>
                                   {b.name}
-                                  {b.isCurrent ? ' (aktif)' : b.name === 'bowhead' ? ' (default)' : ''}
+                                  {b.isCurrent ? ' (aktif)' : (b.name === 'main' || b.name === 'master') ? ' (default)' : ''}
                                 </option>
                               ))}
                             </select>
