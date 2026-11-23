@@ -1,30 +1,16 @@
-/** @type {import('tailwindcss').Config} */
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export default {
   content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
+    path.resolve(__dirname, "./index.html"),
+    path.resolve(__dirname, "./src/**/*.{js,ts,jsx,tsx}"),
   ],
-  darkMode: 'class',
   theme: {
-    extend: {
-      colors: {
-        studio: {
-          bg: '#0b0f17',
-          surface: '#111827',
-          card: '#161f30',
-          border: '#1f293d',
-          muted: '#64748b',
-          accent: '#f59e0b',
-          primary: '#6366f1',
-          success: '#10b981',
-          danger: '#ef4444',
-        },
-      },
-      fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'monospace'],
-      },
-    },
+    extend: {},
   },
   plugins: [],
-};
+}
