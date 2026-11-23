@@ -1,3 +1,4 @@
+import { localDB } from './services/localDbService';
 import { AddProjectModal } from './components/AddProjectModal';
 import { StudioProjectHubModal } from './components/StudioProjectHubModal';
 import { AIProviderSettingsModal } from './components/AIProviderSettingsModal';
@@ -291,6 +292,14 @@ export default function App() {
     }
   };
 
+  // Auto-sync chat messages to IndexedDB
+  useEffect(() => {
+    if (messages.length > 0 && selectedRepo) {
+      const sessId = `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      localDB.saveChatSession(sessId, selectedRepo.id, messages).catch(() => {});
+    }
+  }, [messages, selectedRepo]);
+
   // Scroll chat to bottom on new messages
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -305,7 +314,20 @@ export default function App() {
       const data = await res.json();
       if (data.success && (data.workspaces || data.repos)) {
         const repoList: RepoProject[] = data.workspaces || data.repos;
-        setWorkspaces(repoList);
+                setWorkspaces(repoList);
+        // Persist to IndexedDB
+        repoList.forEach((r) => {
+          localDB.saveWorkspace({
+            id: r.id,
+            name: r.name,
+            repoUrl: r.repoUrl,
+            defaultPath: r.defaultPath,
+            framework: r.framework,
+            pinned: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }).catch(() => {});
+        });
         if (repoList.length > 0 && !selectedRepo) {
           const currentRepo =
             repoList.find((r) => r.branches.some((b) => b.isCurrent)) || repoList[0];
