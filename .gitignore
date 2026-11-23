@@ -5,3 +5,6 @@ dist
 projects.json
 removed_projects.json
 
+# Berkas lingkungan (dapat berisi rahasia API) — jangan pernah dipublikasikan
+.env
+
