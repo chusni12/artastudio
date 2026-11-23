@@ -36,6 +36,15 @@ artastudio
 Buka browser Anda di:
 👉 **`http://localhost:4000`**
 
+### Cara Memperbarui ArtaStudio ke Versi Paling Mutakhir (Auto-Updater)
+Cukup ketik satu perintah ini di terminal:
+```bash
+artastudio update
+# atau
+artastudio latest
+```
+*Perintah ini otomatis menarik commit terbaru dari GitHub, memasang dependencies baru, dan mem-build ulang frontend UI tanpa perlu langkah manual!*
+
 ### Cara Menutup / Menghentikan Server
 - Di terminal yang sedang berjalan: Tekan **`Ctrl + C`**
 - Atau dari terminal lain: Ketik **`artastudio stop`** (atau `artastudio exit`)
