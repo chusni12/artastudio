@@ -208,4 +208,75 @@ router.get('/current', (req: Request, res: Response) => {
   res.json({ success: true, workspace: currentRepo, repo: currentRepo });
 });
 
+
+const customProjectsFile = path.join(process.cwd(), 'projects.json');
+
+function loadCustomProjects(): string[] {
+  if (fs.existsSync(customProjectsFile)) {
+    try {
+      return JSON.parse(fs.readFileSync(customProjectsFile, 'utf-8'));
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function saveCustomProjects(paths: string[]) {
+  try {
+    fs.writeFileSync(customProjectsFile, JSON.stringify(paths, null, 2), 'utf-8');
+  } catch {}
+}
+
+router.post('/add', async (req: Request, res: Response) => {
+  const { mode, localPath, gitUrl, folderName } = req.body || {};
+
+  try {
+    if (mode === 'local') {
+      if (!localPath || !fs.existsSync(localPath)) {
+        return res.status(400).json({ success: false, error: 'Direktori folder lokal tidak ditemukan di sistem' });
+      }
+      const absPath = path.resolve(localPath);
+      const custom = loadCustomProjects();
+      if (!custom.includes(absPath)) {
+        custom.push(absPath);
+        saveCustomProjects(custom);
+      }
+      return res.json({ success: true, message: 'Proyek berhasil ditautkan!', path: absPath });
+    }
+
+    if (mode === 'clone') {
+      if (!gitUrl || !gitUrl.startsWith('http')) {
+        return res.status(400).json({ success: false, error: 'URL Git tidak valid' });
+      }
+
+      const rootWorkspaces = '/home/chusni/orca/workspaces';
+      let dirName = folderName;
+      if (!dirName) {
+        const match = gitUrl.match(/\/([^/]+?)(?:\.git)?$/);
+        dirName = match ? match[1] : `project_${Date.now()}`;
+      }
+
+      const targetPath = path.join(rootWorkspaces, dirName);
+      if (fs.existsSync(targetPath)) {
+        return res.status(400).json({ success: false, error: `Folder target ${dirName} sudah ada di workspaces!` });
+      }
+
+      execSync(`git clone ${gitUrl} "${targetPath}"`, { stdio: 'inherit' });
+
+      const custom = loadCustomProjects();
+      if (!custom.includes(targetPath)) {
+        custom.push(targetPath);
+        saveCustomProjects(custom);
+      }
+
+      return res.json({ success: true, message: 'Clone berhasil!', path: targetPath });
+    }
+
+    return res.status(400).json({ success: false, error: 'Mode tidak didukung' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Gagal menambahkan proyek' });
+  }
+});
+
 export default router;

@@ -1,3 +1,4 @@
+import { AddProjectModal } from './components/AddProjectModal';
 import { StudioProjectHubModal } from './components/StudioProjectHubModal';
 import { AIProviderSettingsModal } from './components/AIProviderSettingsModal';
 import { SecurityCheckModal } from './components/SecurityCheckModal';
@@ -68,6 +69,7 @@ export default function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [isDeploying, setIsDeploying] = useState<boolean>(false);
   const [isProjectHubOpen, setIsProjectHubOpen] = useState<boolean>(false);
+  const [isAddProjectOpen, setIsAddProjectOpen] = useState<boolean>(false);
   const [selectedRoutePath, setSelectedRoutePath] = useState<string>('/');
   const [isRouteDropdownOpen, setIsRouteDropdownOpen] = useState<boolean>(false);
   const projectRoutesMap: Record<string, { label: string; path: string }[]> = {
@@ -719,10 +721,18 @@ export default function App() {
           <aside className={`w-full md:w-72 border-r border-slate-800/80 bg-[#0c121e]/90 flex flex-col shrink-0 ${mobileTab === 'projects' ? 'flex' : 'hidden md:flex'}` }>
             <div className="p-3 border-b border-slate-800/60 flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                <span>Repository & Proyek</span>
+                <span>Proyek</span>
                 <span className="text-[10px] font-mono text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
                   {workspaces.length}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setIsAddProjectOpen(true)}
+                  title="Tambah Proyek Baru"
+                  className="ml-auto px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition-colors"
+                >
+                  + Tambah
+                </button>
               </h3>
               <button
                 onClick={() => setIsSidebarOpen(false)}
@@ -1229,6 +1239,12 @@ export default function App() {
         }}
       />
       {/* Studio Project Hub Modal (Lainnya) */}
+      <AddProjectModal
+        isOpen={isAddProjectOpen}
+        onClose={() => setIsAddProjectOpen(false)}
+        onProjectAdded={() => fetchWorkspaces()}
+      />
+
       <StudioProjectHubModal
         isOpen={isProjectHubOpen}
         onClose={() => setIsProjectHubOpen(false)}
