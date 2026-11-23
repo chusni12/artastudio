@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { SecurityAuditReport, SecurityPillarResult, SecurityFinding } from '../../shared/types';
+import type { SecurityAuditReport, SecurityPillarResult, SecurityFinding } from '../../../shared/types';
 
 interface SecurityCheckModalProps {
   isOpen: boolean;

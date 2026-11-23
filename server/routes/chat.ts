@@ -74,9 +74,10 @@ const handleSendMessage = (req: Request, res: Response) => {
   const assistantMsg: ChatMessage = {
     id: assistantMsgId,
     sender: 'assistant',
-    text: 'Menghubungkan ke OpenCode AI Engine...',
+    text: '',
     timestamp: new Date().toISOString(),
     status: 'analyzing',
+    statusMessage: 'Menghubungkan ke OpenCode AI Engine...',
   };
 
   session.messages.push(assistantMsg);
@@ -100,6 +101,14 @@ const handleSendMessage = (req: Request, res: Response) => {
       onChunk: (delta, accumulated) => {
         assistantMsg.text = accumulated;
         broadcastWebSocketEvent('chat', 'message:new', assistantMsg);
+        broadcastWebSocketEvent('chat', 'message:chunk', {
+          id: assistantMsg.id,
+          delta,
+          accumulated,
+          text: accumulated,
+          status: assistantMsg.status,
+          message: assistantMsg,
+        });
         broadcastSSE(sessionId, {
           type: 'text_delta',
           delta,
@@ -109,18 +118,32 @@ const handleSendMessage = (req: Request, res: Response) => {
       },
       onStatus: (status, statusMessage) => {
         assistantMsg.status = status;
+        assistantMsg.statusMessage = statusMessage;
         broadcastWebSocketEvent('chat', 'message:new', assistantMsg);
+        broadcastWebSocketEvent('chat', 'message:status', {
+          id: assistantMsg.id,
+          status,
+          statusMessage,
+          message: assistantMsg,
+        });
         broadcastSSE(sessionId, {
           type: 'status',
           status,
           message: statusMessage,
+          assistantMsg,
         });
       },
     })
     .then((finalText) => {
       assistantMsg.status = 'done';
+      assistantMsg.statusMessage = undefined;
       assistantMsg.text = finalText;
       broadcastWebSocketEvent('chat', 'message:new', assistantMsg);
+      broadcastWebSocketEvent('chat', 'message:status', {
+        id: assistantMsg.id,
+        status: 'done',
+        message: assistantMsg,
+      });
       broadcastSSE(sessionId, {
         type: 'done',
         message: assistantMsg,
@@ -128,8 +151,14 @@ const handleSendMessage = (req: Request, res: Response) => {
     })
     .catch((err) => {
       assistantMsg.status = 'error';
+      assistantMsg.statusMessage = 'Gagal memproses instruksi';
       assistantMsg.text = `Gagal memproses instruksi: ${err instanceof Error ? err.message : String(err)}`;
       broadcastWebSocketEvent('chat', 'message:new', assistantMsg);
+      broadcastWebSocketEvent('chat', 'message:status', {
+        id: assistantMsg.id,
+        status: 'error',
+        message: assistantMsg,
+      });
       broadcastSSE(sessionId, {
         type: 'error',
         error: assistantMsg.text,

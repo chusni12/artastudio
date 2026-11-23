@@ -11,7 +11,59 @@ import { EventEmitter } from 'node:events';
 
 const execFileAsync = promisify(execFile);
 
-export type AIStatusType = 'analyzing' | 'editing' | 'building' | 'done' | 'error';
+export type AIStatusType = 'analyzing' | 'thinking' | 'editing' | 'building' | 'done' | 'error';
+
+export class TokenStreamQueue {
+  private queue: string[] = [];
+  private isProcessing = false;
+  private accumulated = '';
+  private onChunk?: (delta: string, accumulated: string) => void;
+  private signal?: AbortSignal;
+
+  constructor(onChunk?: (delta: string, accumulated: string) => void, signal?: AbortSignal) {
+    this.onChunk = onChunk;
+    this.signal = signal;
+  }
+
+  public push(text: string) {
+    if (!text) return;
+    this.queue.push(text);
+    if (!this.isProcessing) {
+      this.processQueue();
+    }
+  }
+
+  public async drain(): Promise<string> {
+    while (this.isProcessing || this.queue.length > 0) {
+      if (this.signal?.aborted) break;
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    return this.accumulated;
+  }
+
+  public getAccumulated(): string {
+    return this.accumulated;
+  }
+
+  private async processQueue() {
+    this.isProcessing = true;
+    while (this.queue.length > 0) {
+      if (this.signal?.aborted) break;
+      const text = this.queue.shift()!;
+      // Split into word tokens, punctuation, and whitespace for natural smooth typing
+      const tokens = text.split(/(\s+|[.,!?;:\n])/);
+      for (const token of tokens) {
+        if (!token) continue;
+        if (this.signal?.aborted) break;
+        this.accumulated += token;
+        this.onChunk?.(token, this.accumulated);
+        // Smooth streaming pacing: 8-16ms delay per token
+        await new Promise((r) => setTimeout(r, Math.min(16, Math.max(8, token.length * 2))));
+      }
+    }
+    this.isProcessing = false;
+  }
+}
 
 export interface ExecutePromptOptions {
   prompt: string;
@@ -214,7 +266,7 @@ export class RealAiService extends EventEmitter {
     onStatus?.('analyzing', 'Menjalankan Agy AI Engine...');
 
     return new Promise<string>((resolve, reject) => {
-      let accumulatedText = '';
+      const streamQueue = new TokenStreamQueue(onChunk, abortController.signal);
       const isWindows = process.platform === 'win32';
       const child = spawn(agyPath, ['-p', prompt, '--dangerously-skip-permissions'], {
         cwd: projectPath,
@@ -230,22 +282,22 @@ export class RealAiService extends EventEmitter {
 
       child.stdout?.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
-        accumulatedText += text;
-        onChunk?.(text, accumulatedText);
+        streamQueue.push(text);
       });
 
       child.stderr?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString();
-        if (text.includes('thinking') || text.includes('thought')) {
-          onStatus?.('analyzing', 'Agy sedang menganalisis...');
+        const text = chunk.toString().toLowerCase();
+        if (text.includes('thinking') || text.includes('thought') || text.includes('analyz')) {
+          onStatus?.('thinking', 'Agy sedang menganalisis arsitektur...');
         } else if (text.includes('write') || text.includes('edit')) {
           onStatus?.('editing', 'Agy memproses perubahan berkas...');
         }
       });
 
-      child.on('close', (code) => {
+      child.on('close', async (code) => {
+        const final = await streamQueue.drain();
         onStatus?.('done', 'Selesai');
-        resolve(accumulatedText.trim() || 'Instruksi selesai dieksekusi oleh Agy.');
+        resolve(final.trim() || 'Instruksi selesai dieksekusi oleh Agy.');
       });
 
       child.on('error', (err) => {
@@ -265,13 +317,13 @@ export class RealAiService extends EventEmitter {
     onStatus?: (status: AIStatusType, message?: string) => void;
   }): Promise<string> {
     const { openCodePath, prompt, projectPath, abortController, execution, onChunk, onStatus } = params;
-    const args = ['run', '--format', 'json', '--thinking', prompt];
+    const args = ['run', '--format', 'json', '--thinking', '--auto', prompt];
     const isWindows = process.platform === 'win32';
 
     onStatus?.('analyzing', 'Menginisialisasi OpenCode AI Agent...');
 
     return new Promise<string>((resolve, reject) => {
-      let accumulatedText = '';
+      const streamQueue = new TokenStreamQueue(onChunk, abortController.signal);
       let accumulatedReasoning = '';
       let lineBuffer = '';
 
@@ -298,24 +350,58 @@ export class RealAiService extends EventEmitter {
 
           try {
             const event = JSON.parse(trimmed);
-            if (event.type === 'thinking' || event.type === 'thought') {
-              accumulatedReasoning += event.content || event.text || '';
-              onStatus?.('analyzing', 'AI sedang menganalisis arsitektur...');
-            } else if (event.type === 'text' || event.type === 'delta') {
-              const delta = event.content || event.text || event.delta || '';
-              accumulatedText += delta;
-              onChunk?.(delta, accumulatedText);
+            const eventType = event.type || event.part?.type;
+
+            if (eventType === 'step_start') {
+              onStatus?.('analyzing', 'OpenCode memulai langkah analisis...');
+            } else if (eventType === 'reasoning' || eventType === 'thinking' || eventType === 'thought') {
+              const reasoningText = event.part?.text || event.text || event.content || '';
+              accumulatedReasoning += reasoningText;
+              onStatus?.('thinking', 'AI sedang menganalisis arsitektur & merancang solusi...');
+            } else if (eventType === 'tool_use' || eventType === 'tool') {
+              const toolName = event.part?.tool || event.tool || event.part?.state?.title || 'operasi';
+              onStatus?.('editing', `OpenCode menjalankan aksi: ${toolName}...`);
+            } else if (eventType === 'text' || eventType === 'delta') {
+              const delta = event.part?.text || event.text || event.delta || event.content || '';
+              if (delta) {
+                onStatus?.('editing', 'Menulis balasan kode & solusi...');
+                streamQueue.push(delta);
+              }
+            } else if (eventType === 'step_finish') {
+              // langkah selesai
             }
           } catch {
-            accumulatedText += line + '\n';
-            onChunk?.(line + '\n', accumulatedText);
+            streamQueue.push(line + '\n');
           }
         }
       });
 
-      child.on('close', (code) => {
+      child.stderr?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString().toLowerCase();
+        if (text.includes('thinking') || text.includes('analyz')) {
+          onStatus?.('thinking', 'OpenCode menganalisis konteks...');
+        } else if (text.includes('edit') || text.includes('write')) {
+          onStatus?.('editing', 'Menerapkan perubahan berkas...');
+        }
+      });
+
+      child.on('close', async (code) => {
+        if (lineBuffer.trim()) {
+          try {
+            const event = JSON.parse(lineBuffer.trim());
+            const delta = event.part?.text || event.text || event.delta || event.content || '';
+            if (delta) streamQueue.push(delta);
+          } catch {
+            streamQueue.push(lineBuffer + '\n');
+          }
+        }
+
+        const streamedResult = await streamQueue.drain();
         onStatus?.('done', 'Selesai');
-        const finalResult = accumulatedText.trim() || accumulatedReasoning.trim() || 'Perubahan selesai dieksekusi.';
+        const finalResult =
+          streamedResult.trim() ||
+          accumulatedReasoning.trim() ||
+          'Perubahan selesai dieksekusi oleh OpenCode.';
         resolve(finalResult);
       });
 
@@ -335,7 +421,13 @@ export class RealAiService extends EventEmitter {
     const { prompt, projectPath, abortController, onChunk, onStatus } = params;
 
     onStatus?.('analyzing', `Menganalisis proyek (${path.basename(projectPath)})...`);
-    await this.delay(100, abortController.signal);
+    await this.delay(300, abortController.signal);
+
+    onStatus?.('thinking', `Memeriksa dependensi dan file arsitektur...`);
+    await this.delay(350, abortController.signal);
+
+    onStatus?.('editing', `Menyusun respons terstruktur...`);
+    await this.delay(200, abortController.signal);
 
     // Ambil struktur file proyek lokal untuk konteks cerdas
     let projectStructure = '';
@@ -356,9 +448,12 @@ Saya telah menerima instruksi Anda:
 **Status:**
 Instruksi Anda telah dipetakan ke pipeline pengerjaan. Untuk eksekusi langsung perubahan kode otomatis di berkas lokal, pastikan **OpenCode CLI** atau **Agy CLI** terpasang di sistem Anda, atau atur **Custom API Key** di menu **AI Suite ⚙️**.`;
 
-    onChunk?.(response, response);
+    const streamQueue = new TokenStreamQueue(onChunk, abortController.signal);
+    streamQueue.push(response);
+    const finalResult = await streamQueue.drain();
+
     onStatus?.('done', 'Selesai');
-    return response;
+    return finalResult || response;
   }
 
   private delay(ms: number, signal?: AbortSignal): Promise<void> {

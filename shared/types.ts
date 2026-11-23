@@ -83,7 +83,8 @@ export interface ChatMessage {
   text: string;
   timestamp: string;
   commitHash?: string;
-  status?: 'analyzing' | 'editing' | 'building' | 'done' | 'error';
+  status?: 'analyzing' | 'thinking' | 'editing' | 'building' | 'done' | 'error';
+  statusMessage?: string;
 }
 
 export interface ChatSession {
@@ -115,8 +116,8 @@ export interface WebSocketEvent<T = unknown> {
 export interface GitCloneProgress {
   stage: 'cloning' | 'counting' | 'compressing' | 'receiving' | 'resolving' | 'updating' | 'done' | 'error';
   percent: number;
-  totalMb: string;
-  speed: string;
+  totalMb?: string;
+  speed?: string;
   text: string;
   size?: string;
   targetPath?: string;

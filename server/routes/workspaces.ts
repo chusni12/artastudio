@@ -473,6 +473,69 @@ router.get('/seo-status', (req: Request, res: Response) => {
   });
 });
 
+function getGitHubCredentials(): { token?: string; user?: string } {
+  // 1. Dari Environment Variables
+  if (process.env.GITHUB_TOKEN) {
+    return { token: process.env.GITHUB_TOKEN };
+  }
+  if (process.env.GH_TOKEN) {
+    return { token: process.env.GH_TOKEN };
+  }
+
+  // 2. Dari ~/.git-credentials
+  try {
+    const credPath = path.join(os.homedir(), '.git-credentials');
+    if (fs.existsSync(credPath)) {
+      const content = fs.readFileSync(credPath, 'utf-8');
+      const lines = content.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const match = trimmed.match(/^https:\/\/(?:([^:]+):)?([^@]+)@github\.com/);
+        if (match) {
+          return {
+            user: match[1] || undefined,
+            token: match[2],
+          };
+        }
+      }
+    }
+  } catch {}
+
+  // 3. Dari GitHub CLI (gh auth token) jika terpasang
+  try {
+    const ghToken = execSync('gh auth token', { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf-8' }).trim();
+    if (ghToken) {
+      return { token: ghToken };
+    }
+  } catch {}
+
+  return {};
+}
+
+function resolveGitCloneAuth(rawUrl: string): { cloneUrl: string; maskedUrl: string; hasToken: boolean } {
+  const trimmed = rawUrl.trim();
+  if (!trimmed.startsWith('https://github.com/')) {
+    return { cloneUrl: trimmed, maskedUrl: trimmed, hasToken: false };
+  }
+
+  // Jika URL sudah mengandung token / kredensial
+  if (trimmed.includes('@')) {
+    const masked = trimmed.replace(/https:\/\/[^@]+@/, 'https://***@');
+    return { cloneUrl: trimmed, maskedUrl: masked, hasToken: true };
+  }
+
+  const { token, user } = getGitHubCredentials();
+  if (token) {
+    const authPart = user ? `${encodeURIComponent(user)}:${encodeURIComponent(token)}` : encodeURIComponent(token);
+    const cloneUrl = trimmed.replace('https://github.com/', `https://${authPart}@github.com/`);
+    const maskedUrl = trimmed.replace('https://github.com/', 'https://***@github.com/');
+    return { cloneUrl, maskedUrl, hasToken: true };
+  }
+
+  return { cloneUrl: trimmed, maskedUrl: trimmed, hasToken: false };
+}
+
 router.post('/add', async (req: Request, res: Response) => {
   const { mode, localPath, gitUrl, folderName } = req.body || {};
 
@@ -508,11 +571,18 @@ router.post('/add', async (req: Request, res: Response) => {
         fs.mkdirSync(rootWorkspaces, { recursive: true });
       }
 
-      let dirName = folderName;
+      let dirName = folderName ? folderName.trim() : '';
       if (!dirName) {
         const match = gitUrl.match(/\/([^/]+?)(?:\.git)?$/);
         dirName = match ? match[1] : `project_${Date.now()}`;
       }
+
+      // Sanitasi folder name: spasi (seperti "web les") di-normalize menjadi "web-les"
+      // dan bersihkan karakter berbahaya/terlarang untuk path sistem
+      dirName = dirName
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9._-]/g, '');
 
       const targetPath = path.join(rootWorkspaces, dirName);
       if (fs.existsSync(targetPath)) {
@@ -552,15 +622,33 @@ router.post('/add', async (req: Request, res: Response) => {
         targetPath,
       });
 
-      const gitProcess = spawn('git', ['clone', '--progress', gitUrl, targetPath], {
-        env: { ...process.env, LC_ALL: 'C' },
+      const { cloneUrl } = resolveGitCloneAuth(gitUrl);
+
+      // Gunakan credential.helper=store agar git dapat membaca ~/.git-credentials
+      // Dan GIT_TERMINAL_PROMPT=0 agar proses tidak hang jika auth gagal
+      const gitArgs = [
+        '-c', 'credential.helper=store',
+        'clone',
+        '--progress',
+        cloneUrl,
+        targetPath,
+      ];
+
+      const gitProcess = spawn('git', gitArgs, {
+        env: {
+          ...process.env,
+          LC_ALL: 'C',
+          GIT_TERMINAL_PROMPT: '0',
+        },
       });
+
+      const sanitizeLog = (str: string) => str.replace(/https:\/\/[^@]+@github\.com/g, 'https://github.com');
 
       let stderrBuffer = '';
       let rawError = '';
 
       gitProcess.stderr.on('data', (chunk: Buffer) => {
-        const str = chunk.toString('utf-8');
+        const str = sanitizeLog(chunk.toString('utf-8'));
         rawError += str;
         const text = stderrBuffer + str;
         const lines = text.split(/[\r\n]+/);
@@ -575,7 +663,7 @@ router.post('/add', async (req: Request, res: Response) => {
       });
 
       gitProcess.stdout.on('data', (chunk: Buffer) => {
-        const str = chunk.toString('utf-8');
+        const str = sanitizeLog(chunk.toString('utf-8'));
         const lines = str.split(/[\r\n]+/);
         for (const line of lines) {
           const parsed = parseGitProgressLine(line);
@@ -616,7 +704,14 @@ router.post('/add', async (req: Request, res: Response) => {
           if (fs.existsSync(targetPath)) {
             try { fs.rmSync(targetPath, { recursive: true, force: true }); } catch {}
           }
-          const cleanErr = rawError.split('\n').filter((l) => l.includes('fatal:') || l.includes('error:')).join(' ') || rawError.slice(-200) || `Git clone gagal dengan kode keluar ${code}`;
+          const cleanErr = sanitizeLog(
+            rawError
+              .split('\n')
+              .filter((l) => l.includes('fatal:') || l.includes('error:'))
+              .join(' ') ||
+              rawError.slice(-200) ||
+              `Git clone gagal dengan kode keluar ${code}`
+          );
           sendEvent({
             stage: 'error',
             percent: 0,

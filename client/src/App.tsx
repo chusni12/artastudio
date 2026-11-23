@@ -253,14 +253,51 @@ export default function App() {
         setActiveErrors((prev) => [payload.data as DetectedError, ...prev]);
       }
     } else if (channel === 'chat') {
-      if (payload.event === 'message:new') {
+      if (payload.event === 'message:new' || payload.event === 'message:update') {
+        const msg = payload.data as ChatMessage;
         setMessages((prev) => {
-          const msg = payload.data as ChatMessage;
           if (prev.some((m) => m.id === msg.id)) {
-            return prev.map((m) => (m.id === msg.id ? msg : m));
+            return prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m));
           }
           return [...prev, msg];
         });
+      } else if (payload.event === 'message:chunk' || payload.event === 'text_delta') {
+        const chunkData = payload.data as any;
+        const targetId = chunkData.id || chunkData.message?.id;
+        const newText = chunkData.accumulated ?? chunkData.text ?? chunkData.message?.text;
+        const newStatus = chunkData.status || chunkData.message?.status;
+        if (targetId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === targetId
+                ? {
+                    ...m,
+                    text: newText !== undefined ? newText : (m.text + (chunkData.delta || '')),
+                    status: newStatus || m.status,
+                  }
+                : m
+            )
+          );
+        }
+      } else if (payload.event === 'message:status' || payload.event === 'status') {
+        const statusData = payload.data as any;
+        const targetId = statusData.id || statusData.message?.id;
+        const newStatus = statusData.status;
+        const statusMsg = statusData.statusMessage || statusData.message;
+        if (targetId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === targetId
+                ? {
+                    ...m,
+                    status: newStatus,
+                    statusMessage: typeof statusMsg === 'string' ? statusMsg : (m as any).statusMessage,
+                    text: statusData.text !== undefined ? statusData.text : m.text,
+                  }
+                : m
+            )
+          );
+        }
       }
     } else if (channel === 'process') {
       if (payload.event === 'status_change') {
@@ -507,12 +544,63 @@ export default function App() {
     setInputPrompt('');
     setIsSendingPrompt(true);
 
+    const sessionId = selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default';
+
+    // Jika WebSocket sedang tidak aktif, gunakan SSE stream sebagai fallback real-time
+    if (!wsConnected && typeof EventSource !== 'undefined') {
+      try {
+        const es = new EventSource(`/api/chat/stream/${encodeURIComponent(sessionId)}`);
+        es.onmessage = (evt) => {
+          try {
+            const sseData = JSON.parse(evt.data);
+            if (sseData.type === 'message:new' || sseData.type === 'done') {
+              const msg = sseData.message;
+              if (msg) {
+                setMessages((prev) => {
+                  if (prev.some((m) => m.id === msg.id)) {
+                    return prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m));
+                  }
+                  return [...prev, msg];
+                });
+              }
+              if (sseData.type === 'done') es.close();
+            } else if (sseData.type === 'text_delta') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === sseData.message?.id
+                    ? {
+                        ...m,
+                        text: sseData.accumulated ?? (m.text + (sseData.delta || '')),
+                        status: sseData.message?.status,
+                      }
+                    : m
+                )
+              );
+            } else if (sseData.type === 'status') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === (sseData.assistantMsg?.id || sseData.message?.id)
+                    ? {
+                        ...m,
+                        status: sseData.status,
+                        statusMessage: typeof sseData.message === 'string' ? sseData.message : undefined,
+                      }
+                    : m
+                )
+              );
+            }
+          } catch {}
+        };
+        es.onerror = () => es.close();
+      } catch {}
+    }
+
     try {
       const res = await fetch('/api/chat/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default',
+          sessionId,
           text,
           projectPath: selectedBranchPath || selectedRepo?.defaultPath || process.cwd(),
           engineMode: (() => {
@@ -530,9 +618,15 @@ export default function App() {
           setMessages((prev) => {
             const hasUser = prev.some((m) => m.id === data.userMessage.id);
             const hasAssistant = prev.some((m) => m.id === data.assistantMessage.id);
-            const next = [...prev];
+            let next = [...prev];
             if (!hasUser) next.push(data.userMessage);
-            if (!hasAssistant) next.push(data.assistantMessage);
+            if (!hasAssistant) {
+              next.push(data.assistantMessage);
+            } else {
+              next = next.map((m) =>
+                m.id === data.assistantMessage.id ? { ...data.assistantMessage, ...m } : m
+              );
+            }
             return next;
           });
         }
@@ -890,11 +984,61 @@ export default function App() {
                           : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-xs shadow-md'
                       }`}
                     >
-                      <p className="whitespace-pre-wrap">{m.text}</p>
+                      {m.text ? (
+                        <p className="whitespace-pre-wrap">{m.text}</p>
+                      ) : m.sender === 'assistant' && m.status !== 'done' ? (
+                        <p className="text-slate-400 italic text-[11px] animate-pulse">
+                          Sedang memproses instruksi Anda...
+                        </p>
+                      ) : null}
                       {m.status && m.status !== 'done' && (
-                        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-indigo-400 border-t border-slate-800/80 pt-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
-                          <span className="capitalize">Status: {m.status}</span>
+                        <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
+                          <span className="relative flex h-2 w-2 flex-shrink-0">
+                            <span
+                              className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                m.status === 'editing'
+                                  ? 'bg-amber-400'
+                                  : m.status === 'thinking'
+                                  ? 'bg-indigo-400'
+                                  : m.status === 'building'
+                                  ? 'bg-emerald-400'
+                                  : 'bg-cyan-400'
+                              }`}
+                            />
+                            <span
+                              className={`relative inline-flex rounded-full h-2 w-2 ${
+                                m.status === 'editing'
+                                  ? 'bg-amber-500'
+                                  : m.status === 'thinking'
+                                  ? 'bg-indigo-500'
+                                  : m.status === 'building'
+                                  ? 'bg-emerald-500'
+                                  : 'bg-cyan-500'
+                              }`}
+                            />
+                          </span>
+                          <span
+                            className={`font-semibold truncate ${
+                              m.status === 'editing'
+                                ? 'text-amber-300'
+                                : m.status === 'thinking'
+                                ? 'text-indigo-300'
+                                : m.status === 'building'
+                                ? 'text-emerald-300'
+                                : 'text-cyan-300'
+                            }`}
+                          >
+                            {(m as any).statusMessage ||
+                              (m.status === 'analyzing'
+                                ? 'Menganalisis arsitektur proyek...'
+                                : m.status === 'thinking'
+                                ? 'AI sedang merancang solusi kode...'
+                                : m.status === 'editing'
+                                ? 'Menerapkan perubahan berkas...'
+                                : m.status === 'building'
+                                ? 'Memverifikasi sistem...'
+                                : `Status: ${m.status}`)}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1605,11 +1749,61 @@ export default function App() {
                             : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-none'
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{m.text}</p>
+                        {m.text ? (
+                          <p className="whitespace-pre-wrap">{m.text}</p>
+                        ) : m.sender === 'assistant' && m.status !== 'done' ? (
+                          <p className="text-slate-400 italic text-[11px] animate-pulse">
+                            Sedang memproses instruksi Anda...
+                          </p>
+                        ) : null}
                         {m.status && m.status !== 'done' && (
-                          <div className="mt-2 flex items-center gap-1.5 text-[10px] text-indigo-400 border-t border-slate-800/80 pt-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
-                            <span className="capitalize">Status: {m.status}</span>
+                          <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
+                            <span className="relative flex h-2 w-2 flex-shrink-0">
+                              <span
+                                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                  m.status === 'editing'
+                                    ? 'bg-amber-400'
+                                    : m.status === 'thinking'
+                                    ? 'bg-indigo-400'
+                                    : m.status === 'building'
+                                    ? 'bg-emerald-400'
+                                    : 'bg-cyan-400'
+                                }`}
+                              />
+                              <span
+                                className={`relative inline-flex rounded-full h-2 w-2 ${
+                                  m.status === 'editing'
+                                    ? 'bg-amber-500'
+                                    : m.status === 'thinking'
+                                    ? 'bg-indigo-500'
+                                    : m.status === 'building'
+                                    ? 'bg-emerald-500'
+                                    : 'bg-cyan-500'
+                                }`}
+                              />
+                            </span>
+                            <span
+                              className={`font-semibold truncate ${
+                                m.status === 'editing'
+                                  ? 'text-amber-300'
+                                  : m.status === 'thinking'
+                                  ? 'text-indigo-300'
+                                  : m.status === 'building'
+                                  ? 'text-emerald-300'
+                                  : 'text-cyan-300'
+                              }`}
+                            >
+                              {(m as any).statusMessage ||
+                                (m.status === 'analyzing'
+                                  ? 'Menganalisis arsitektur proyek...'
+                                  : m.status === 'thinking'
+                                  ? 'AI sedang merancang solusi kode...'
+                                  : m.status === 'editing'
+                                  ? 'Menerapkan perubahan berkas...'
+                                  : m.status === 'building'
+                                  ? 'Memverifikasi sistem...'
+                                  : `Status: ${m.status}`)}
+                            </span>
                           </div>
                         )}
                       </div>

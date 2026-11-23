@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { GitCloneProgress } from '../../shared/types';
+import type { GitCloneProgress } from '../../../shared/types';
 
 interface AddProjectModalProps {
   isOpen: boolean;
@@ -113,7 +113,7 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
         body: JSON.stringify({
           mode: 'clone',
           gitUrl: gitUrl.trim(),
-          folderName: targetFolderName.trim(),
+          folderName: targetFolderName.trim().replace(/\s+/g, '-'),
           stream: true,
         }),
         signal: controller.signal,
@@ -292,12 +292,15 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="Nama folder untuk clone (kosongkan untuk default)"
+                  placeholder="Nama folder untuk clone (contoh: web-les)"
                   value={targetFolderName}
                   disabled={isLoading}
-                  onChange={(e) => setTargetFolderName(e.target.value)}
+                  onChange={(e) => setTargetFolderName(e.target.value.replace(/\s+/g, '-'))}
                   className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 font-mono text-xs disabled:opacity-50"
                 />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Spasi otomatis dinormalisasi menjadi tanda minus (-)
+                </span>
               </div>
             </div>
           )}

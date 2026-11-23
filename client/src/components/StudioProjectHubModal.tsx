@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { RepoProject, SecurityAuditReport } from '../../shared/types';
+import type { RepoProject, SecurityAuditReport } from '../../../shared/types';
 import {
   Globe,
   Database,
