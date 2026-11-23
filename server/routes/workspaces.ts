@@ -9,7 +9,10 @@ import { broadcastWebSocketEvent } from '../ws';
 
 const router = Router();
 
-function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'> | null {
+function parseGitProgressLine(
+  line: string,
+  context?: { lastTotalMb?: string; lastSpeed?: string }
+): Omit<GitCloneProgress, 'targetPath'> | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
 
@@ -19,8 +22,8 @@ function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'
   let match = trimmed.match(rxReceiving);
   if (match) {
     const percent = parseInt(match[1], 10);
-    const size = match[2];
-    const speed = match[3];
+    const size = match[2] || context?.lastTotalMb || '';
+    const speed = match[3] || context?.lastSpeed || '';
     let text = `Mengunduh objek: ${percent}%`;
     if (size) {
       text += ` (${size}${speed ? ' • ' + speed : ''})`;
@@ -28,9 +31,10 @@ function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'
     return {
       stage: 'receiving',
       percent,
-      text,
-      size,
+      totalMb: size,
       speed,
+      size,
+      text,
     };
   }
 
@@ -43,6 +47,9 @@ function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'
     return {
       stage: 'resolving',
       percent,
+      totalMb: context?.lastTotalMb || '',
+      speed: context?.lastSpeed || '',
+      size: context?.lastTotalMb || '',
       text: `Menyelesaikan delta: ${percent}%`,
     };
   }
@@ -56,6 +63,9 @@ function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'
     return {
       stage: 'updating',
       percent,
+      totalMb: context?.lastTotalMb || '',
+      speed: context?.lastSpeed || '',
+      size: context?.lastTotalMb || '',
       text: `Menyiapkan berkas: ${percent}%`,
     };
   }
@@ -68,6 +78,9 @@ function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'
     return {
       stage: 'compressing',
       percent,
+      totalMb: context?.lastTotalMb || '',
+      speed: context?.lastSpeed || '',
+      size: context?.lastTotalMb || '',
       text: `Mengompres objek: ${percent}%`,
     };
   }
@@ -80,6 +93,9 @@ function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'
     return {
       stage: 'counting',
       percent,
+      totalMb: '',
+      speed: '',
+      size: '',
       text: `Menghitung objek: ${percent}%`,
     };
   }
@@ -89,6 +105,9 @@ function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'
     return {
       stage: 'cloning',
       percent: 0,
+      totalMb: '',
+      speed: '',
+      size: '',
       text: 'Menghubungkan ke repositori...',
     };
   }

@@ -115,8 +115,9 @@ export interface WebSocketEvent<T = unknown> {
 export interface GitCloneProgress {
   stage: 'cloning' | 'counting' | 'compressing' | 'receiving' | 'resolving' | 'updating' | 'done' | 'error';
   percent: number;
+  totalMb: string;
+  speed: string;
   text: string;
-  speed?: string;
   size?: string;
   targetPath?: string;
   success?: boolean;
