@@ -179,18 +179,23 @@ router.get('/', (req: Request, res: Response) => {
 
         if (branches.length > 0) {
           branches.sort((a, b) => {
-            if (a.isCurrent) return -1;
-            if (b.isCurrent) return 1;
+            // Prioritaskan cabang 'main' agar selalu standar seperti Lovable
+            if (a.name === 'main') return -1;
+            if (b.name === 'main') return 1;
+            if (a.name === 'master') return -1;
+            if (b.name === 'master') return 1;
             if (a.name === 'bowhead') return -1;
             if (b.name === 'bowhead') return 1;
-            if (a.name === 'main' || a.name === 'master') return -1;
-            if (b.name === 'main' || b.name === 'master') return 1;
+            if (a.isCurrent) return -1;
+            if (b.isCurrent) return 1;
             return a.name.localeCompare(b.name);
           });
 
+          // Default selalu cabang 'main' jika tersedia (standar Lovable)
           const defaultBranch =
+            branches.find((b) => b.name === 'main') ||
+            branches.find((b) => b.name === 'master') ||
             branches.find((b) => b.name === 'bowhead') ||
-            branches.find((b) => b.isCurrent) ||
             branches[0];
           const defaultPath = defaultBranch ? defaultBranch.path : orgPath;
           const framework = detectFramework(findPackageJsonRecursive(defaultPath));
