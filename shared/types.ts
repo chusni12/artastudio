@@ -103,13 +103,24 @@ export interface DeploymentInfo {
   createdAt: string;
 }
 
-export type WebSocketChannel = 'logs' | 'errors' | 'chat' | 'system' | 'workspaces';
+export type WebSocketChannel = 'logs' | 'errors' | 'chat' | 'system' | 'workspaces' | 'process';
 
 export interface WebSocketEvent<T = unknown> {
   channel: WebSocketChannel;
   event: string;
   data: T;
   timestamp: string;
+}
+
+export interface GitCloneProgress {
+  stage: 'cloning' | 'counting' | 'compressing' | 'receiving' | 'resolving' | 'updating' | 'done' | 'error';
+  percent: number;
+  text: string;
+  speed?: string;
+  size?: string;
+  targetPath?: string;
+  success?: boolean;
+  error?: string;
 }
 
 // Compatibility types for chatBridge and services

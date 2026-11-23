@@ -3,10 +3,98 @@ import type { Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execSync, execFileSync } from 'node:child_process';
-import type { RepoProject, RepoBranch } from '../../shared/types';
+import { execSync, execFileSync, spawn } from 'node:child_process';
+import type { RepoProject, RepoBranch, GitCloneProgress } from '../../shared/types';
+import { broadcastWebSocketEvent } from '../ws';
 
 const router = Router();
+
+function parseGitProgressLine(line: string): Omit<GitCloneProgress, 'targetPath'> | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+
+  // 1. Receiving objects:  45% (17017/37817), 162.77 MiB | 9.56 MiB/s
+  // Also Indonesian: Menerima objek:  45% (17017/37817), 162.77 MiB | 9.56 MiB/s
+  const rxReceiving = /(?:Receiving objects|Menerima objek):\s+(\d+)%(?:[^(]*\([^)]+\))?(?:,\s*([\d.]+\s*[KMGT]?i?B))?(?:\s*\|\s*([\d.]+\s*[KMGT]?i?B\/s))?/i;
+  let match = trimmed.match(rxReceiving);
+  if (match) {
+    const percent = parseInt(match[1], 10);
+    const size = match[2];
+    const speed = match[3];
+    let text = `Mengunduh objek: ${percent}%`;
+    if (size) {
+      text += ` (${size}${speed ? ' • ' + speed : ''})`;
+    }
+    return {
+      stage: 'receiving',
+      percent,
+      text,
+      size,
+      speed,
+    };
+  }
+
+  // 2. Resolving deltas:  80% (21888/27361)
+  // Also Indonesian: Menyelesaikan delta:  80%
+  const rxResolving = /(?:Resolving deltas|Menyelesaikan delta):\s+(\d+)%/i;
+  match = trimmed.match(rxResolving);
+  if (match) {
+    const percent = parseInt(match[1], 10);
+    return {
+      stage: 'resolving',
+      percent,
+      text: `Menyelesaikan delta: ${percent}%`,
+    };
+  }
+
+  // 3. Updating files:  90% (500/555)
+  // Also Indonesian: Memperbarui berkas: 90%
+  const rxUpdating = /(?:Updating files|Memperbarui berkas):\s+(\d+)%/i;
+  match = trimmed.match(rxUpdating);
+  if (match) {
+    const percent = parseInt(match[1], 10);
+    return {
+      stage: 'updating',
+      percent,
+      text: `Menyiapkan berkas: ${percent}%`,
+    };
+  }
+
+  // 4. Compressing objects: 80% (16/20)
+  const rxCompressing = /(?:Compressing objects|Mengompresi objek):\s+(\d+)%/i;
+  match = trimmed.match(rxCompressing);
+  if (match) {
+    const percent = parseInt(match[1], 10);
+    return {
+      stage: 'compressing',
+      percent,
+      text: `Mengompres objek: ${percent}%`,
+    };
+  }
+
+  // 5. Counting / Enumerating objects: 50%
+  const rxCounting = /(?:Counting objects|Menghitung objek):\s+(\d+)%/i;
+  match = trimmed.match(rxCounting);
+  if (match) {
+    const percent = parseInt(match[1], 10);
+    return {
+      stage: 'counting',
+      percent,
+      text: `Menghitung objek: ${percent}%`,
+    };
+  }
+
+  // 6. Cloning into '...'
+  if (/^Cloning into|^Kloning ke/i.test(trimmed)) {
+    return {
+      stage: 'cloning',
+      percent: 0,
+      text: 'Menghubungkan ke repositori...',
+    };
+  }
+
+  return null;
+}
 
 function getGitRemoteUrl(dirPath: string): string {
   try {
@@ -389,7 +477,7 @@ router.post('/add', async (req: Request, res: Response) => {
     }
 
     if (mode === 'clone') {
-      if (!gitUrl || !gitUrl.startsWith('http')) {
+      if (!gitUrl || (!gitUrl.startsWith('http') && !gitUrl.startsWith('file://') && !gitUrl.startsWith('git@'))) {
         return res.status(400).json({ success: false, error: 'URL Git tidak valid' });
       }
 
@@ -412,19 +500,146 @@ router.post('/add', async (req: Request, res: Response) => {
         return res.status(400).json({ success: false, error: `Folder target ${dirName} sudah ada!` });
       }
 
-      execFileSync('git', ['clone', gitUrl, targetPath], { stdio: 'inherit' });
+      const isSse = req.headers.accept?.includes('text/event-stream') || req.body?.stream === true || req.query?.stream === 'true';
 
-      // Hapus dari daftar removed jika sebelumnya pernah dihapus
-      const removed = loadRemovedProjects().filter(p => path.resolve(p) !== path.resolve(targetPath));
-      saveRemovedProjects(removed);
-
-      const custom = loadCustomProjects();
-      if (!custom.includes(targetPath)) {
-        custom.push(targetPath);
-        saveCustomProjects(custom);
+      if (isSse) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof res.flushHeaders === 'function') {
+          res.flushHeaders();
+        }
       }
 
-      return res.json({ success: true, message: 'Clone berhasil!', path: targetPath });
+      const sendEvent = (payload: GitCloneProgress) => {
+        try {
+          broadcastWebSocketEvent('workspaces', 'clone:progress', payload);
+        } catch {}
+
+        if (isSse && !res.writableEnded) {
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          if (typeof (res as any).flush === 'function') {
+            (res as any).flush();
+          }
+        }
+      };
+
+      // Initial progress
+      sendEvent({
+        stage: 'cloning',
+        percent: 0,
+        text: 'Menghubungkan ke repositori Git...',
+        targetPath,
+      });
+
+      const gitProcess = spawn('git', ['clone', '--progress', gitUrl, targetPath], {
+        env: { ...process.env, LC_ALL: 'C' },
+      });
+
+      let stderrBuffer = '';
+      let rawError = '';
+
+      gitProcess.stderr.on('data', (chunk: Buffer) => {
+        const str = chunk.toString('utf-8');
+        rawError += str;
+        const text = stderrBuffer + str;
+        const lines = text.split(/[\r\n]+/);
+        stderrBuffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const parsed = parseGitProgressLine(line);
+          if (parsed) {
+            sendEvent({ ...parsed, targetPath });
+          }
+        }
+      });
+
+      gitProcess.stdout.on('data', (chunk: Buffer) => {
+        const str = chunk.toString('utf-8');
+        const lines = str.split(/[\r\n]+/);
+        for (const line of lines) {
+          const parsed = parseGitProgressLine(line);
+          if (parsed) {
+            sendEvent({ ...parsed, targetPath });
+          }
+        }
+      });
+
+      gitProcess.on('error', (err) => {
+        if (fs.existsSync(targetPath)) {
+          try { fs.rmSync(targetPath, { recursive: true, force: true }); } catch {}
+        }
+        sendEvent({
+          stage: 'error',
+          percent: 0,
+          text: `Gagal menjalankan git: ${err.message}`,
+          error: err.message,
+          success: false,
+          targetPath,
+        });
+        if (isSse) {
+          res.end();
+        } else {
+          res.status(500).json({ success: false, error: err.message });
+        }
+      });
+
+      gitProcess.on('close', (code) => {
+        if (stderrBuffer.trim()) {
+          const parsed = parseGitProgressLine(stderrBuffer);
+          if (parsed) {
+            sendEvent({ ...parsed, targetPath });
+          }
+        }
+
+        if (code !== 0) {
+          if (fs.existsSync(targetPath)) {
+            try { fs.rmSync(targetPath, { recursive: true, force: true }); } catch {}
+          }
+          const cleanErr = rawError.split('\n').filter((l) => l.includes('fatal:') || l.includes('error:')).join(' ') || rawError.slice(-200) || `Git clone gagal dengan kode keluar ${code}`;
+          sendEvent({
+            stage: 'error',
+            percent: 0,
+            text: cleanErr,
+            error: cleanErr,
+            success: false,
+            targetPath,
+          });
+          if (isSse) {
+            res.end();
+          } else {
+            res.status(500).json({ success: false, error: cleanErr });
+          }
+          return;
+        }
+
+        // Hapus dari daftar removed jika sebelumnya pernah dihapus
+        const removed = loadRemovedProjects().filter((p) => path.resolve(p) !== path.resolve(targetPath));
+        saveRemovedProjects(removed);
+
+        const custom = loadCustomProjects();
+        if (!custom.includes(targetPath)) {
+          custom.push(targetPath);
+          saveCustomProjects(custom);
+        }
+
+        sendEvent({
+          stage: 'done',
+          percent: 100,
+          text: '100% Selesai!',
+          success: true,
+          targetPath,
+        });
+
+        if (isSse) {
+          res.end();
+        } else {
+          res.json({ success: true, message: 'Clone berhasil!', path: targetPath });
+        }
+      });
+
+      return;
     }
 
     return res.status(400).json({ success: false, error: 'Mode tidak didukung' });

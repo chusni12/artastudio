@@ -280,6 +280,14 @@ export default function App() {
         setDeployNotification(`Edge deployment sukses: ${(payload.data as any)?.url || ''}`);
         setTimeout(() => setDeployNotification(null), 6000);
       }
+    } else if (channel === 'workspaces') {
+      if (payload.event === 'clone:progress') {
+        const data = payload.data as any;
+        if (data?.text) {
+          setLogs((prev) => [...prev.slice(-300), `[Git Clone] ${data.text}`]);
+        }
+        window.dispatchEvent(new CustomEvent('artastudio:clone:progress', { detail: data }));
+      }
     }
   };
 
