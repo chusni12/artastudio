@@ -541,10 +541,12 @@ router.post('/add', async (req: Request, res: Response) => {
 
   try {
     if (mode === 'local') {
-      if (!localPath || !fs.existsSync(localPath)) {
-        return res.status(400).json({ success: false, error: 'Direktori folder lokal tidak ditemukan di sistem' });
+      const rawPath = (localPath || '').trim().replace(/^["']|["']$/g, '').trim();
+      const absPath = path.resolve(rawPath);
+
+      if (!rawPath || !fs.existsSync(absPath)) {
+        return res.status(400).json({ success: false, error: `Direktori folder lokal tidak ditemukan di sistem: ${rawPath}` });
       }
-      const absPath = path.resolve(localPath);
       
       // Hapus dari daftar removed jika sebelumnya pernah disembunyikan
       const removed = loadRemovedProjects().filter(p => path.resolve(p) !== absPath);
