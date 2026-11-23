@@ -70,19 +70,46 @@ export default function App() {
   const [isProjectHubOpen, setIsProjectHubOpen] = useState<boolean>(false);
   const [selectedRoutePath, setSelectedRoutePath] = useState<string>('/');
   const [isRouteDropdownOpen, setIsRouteDropdownOpen] = useState<boolean>(false);
-  const knownProjectRoutes = [
-    { label: 'Halaman Utama', path: '/' },
-    { label: 'Katalog Marketplace', path: '/marketplace' },
-    { label: 'Komisi Custom', path: '/commissions' },
-    { label: 'Ruang Seniman', path: '/ruang-seniman' },
-    { label: 'Pameran Seni (Galeri)', path: '/pameran-galeri' },
-    { label: 'Toko Arta & Reward', path: '/toko' },
-    { label: 'Profil Saya', path: '/profile' },
-    { label: 'Item Saya', path: '/item-saya' },
-    { label: 'Studio Paint (Draw)', path: '/studiopaint' },
-    { label: 'Bantuan & FAQ', path: '/pusat-bantuan' },
-    { label: 'Admin Dashboard', path: '/admin' },
-  ];
+  const projectRoutesMap: Record<string, { label: string; path: string }[]> = {
+    artaloka: [
+      { label: 'Halaman Utama', path: '/' },
+      { label: 'Katalog Marketplace', path: '/marketplace' },
+      { label: 'Komisi Custom', path: '/commissions' },
+      { label: 'Ruang Seniman', path: '/ruang-seniman' },
+      { label: 'Pameran Seni (Galeri)', path: '/pameran-galeri' },
+      { label: 'Toko Arta & Reward', path: '/toko' },
+      { label: 'Profil Saya', path: '/profile' },
+      { label: 'Item Saya', path: '/item-saya' },
+      { label: 'Studio Paint (Draw)', path: '/studiopaint' },
+      { label: 'Bantuan & FAQ', path: '/pusat-bantuan' },
+      { label: 'Admin Dashboard', path: '/admin' },
+    ],
+    tahqiq: [
+      { label: 'Beranda Tahqiq', path: '/' },
+      { label: 'Katalog Kitab & Naskah', path: '/katalog' },
+      { label: 'Editor Tahqiq', path: '/editor' },
+      { label: 'Bantuan & Panduan', path: '/bantuan' },
+    ],
+    artastudio: [
+      { label: 'Studio Dashboard', path: '/' },
+      { label: 'Status & Logs API', path: '/api/health' },
+      { label: 'Daftar Workspace', path: '/api/workspaces' },
+    ],
+  };
+
+  const getActiveProjectRoutes = () => {
+    const id = (selectedRepo?.name || selectedRepo?.id || '').toLowerCase();
+    if (id.includes('artaloka')) return projectRoutesMap.artaloka;
+    if (id.includes('tahqiq')) return projectRoutesMap.tahqiq;
+    if (id.includes('studio')) return projectRoutesMap.artastudio;
+    return [
+      { label: 'Halaman Utama', path: '/' },
+      { label: 'Tentang Kami', path: '/about' },
+      { label: 'Kontak', path: '/contact' },
+    ];
+  };
+
+  const currentProjectRoutes = getActiveProjectRoutes();
   const [isAISettingsOpen, setIsAISettingsOpen] = useState<boolean>(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
   const [securityReport, setSecurityReport] = useState<SecurityAuditReport | null>(null);
@@ -250,9 +277,10 @@ export default function App() {
     }
   };
 
-  const fetchChatHistory = async () => {
+  const fetchChatHistory = async (targetSessionId?: string) => {
     try {
-      const res = await fetch('/api/chat/history?sessionId=default');
+      const sessId = targetSessionId || (selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default');
+      const res = await fetch(`/api/chat/history?sessionId=${encodeURIComponent(sessId)}`);
       const data = await res.json();
       if (data.success && data.messages) {
         setMessages(data.messages);
@@ -315,7 +343,7 @@ export default function App() {
     };
   }, [isDragging, isSidebarOpen]);
 
-  const handleSelectWorkspace = (repo: RepoProject, branchPath?: string) => {
+  const handleSelectWorkspace = async (repo: RepoProject, branchPath?: string) => {
     setSelectedRepo(repo);
     const targetBranch = branchPath
       ? repo.branches.find((b) => b.path === branchPath)
@@ -325,6 +353,27 @@ export default function App() {
     const targetPath = targetBranch?.path || repo.defaultPath;
     setSelectedBranchPath(targetPath);
     fetchCommits(targetPath);
+    setSelectedRoutePath('/');
+
+    // 1. Isolasi Chat: Ambil riwayat percakapan khusus proyek ini
+    const projectSessionId = `ws_${repo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    fetchChatHistory(projectSessionId);
+
+    // 2. Isolasi Dev Server & Preview: Cek apakah dev-server proyek ini sedang menyala
+    try {
+      const statusRes = await fetch(`/api/process/status?projectPath=${encodeURIComponent(targetPath)}`);
+      const statusData = await statusRes.json();
+      if (statusData.status && statusData.status.status === 'running') {
+        setDevStatus(statusData.status);
+        if (statusData.status.url) {
+          setPreviewUrl(statusData.status.url);
+          return;
+        }
+      } else {
+        setDevStatus({ projectPath: targetPath, status: 'stopped' });
+      }
+    } catch(e) {}
+
     updatePreviewUrl(repo, targetPath);
   };
 
@@ -400,9 +449,9 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: 'default',
+          sessionId: selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default',
           text,
-          projectPath: selectedWorkspace?.path,
+          projectPath: selectedBranchPath || selectedRepo?.defaultPath || process.cwd(),
           engineMode: (() => {
             try {
               const cfg = localStorage.getItem('artastudio_ai_config');
@@ -704,16 +753,16 @@ export default function App() {
                 return (
                   <div
                     key={repo.id}
-                    className={`rounded-lg p-3 transition-all border ${
+                    onClick={() => handleSelectWorkspace(repo)}
+                    className={`rounded-lg p-3 transition-all border cursor-pointer ${
                       isSelected
-                        ? 'bg-slate-900/95 border-amber-500/60 shadow-lg shadow-amber-500/5'
+                        ? 'bg-slate-900/95 border-amber-500/60 shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/30'
                         : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-800/40 hover:border-slate-700/70'
                     }`}
                   >
                     {/* Header: Big Project Name & Framework Badge */}
                     <div
-                      onClick={() => handleSelectWorkspace(repo)}
-                      className="cursor-pointer flex items-start justify-between gap-2"
+                      className="flex items-start justify-between gap-2"
                     >
                       <div className="flex items-center gap-2">
                         <span
@@ -1058,7 +1107,7 @@ export default function App() {
                 >
                   <div className="flex items-center gap-1.5 truncate">
                     <span className="text-amber-400 font-bold">📄</span>
-                    <span className="truncate">{knownProjectRoutes.find(r => r.path === selectedRoutePath)?.label || selectedRoutePath}</span>
+                    <span className="truncate">{currentProjectRoutes.find(r => r.path === selectedRoutePath)?.label || selectedRoutePath}</span>
                     <span className="text-slate-500 text-[10px]">({selectedRoutePath})</span>
                   </div>
                   <span className="text-[10px] text-slate-400">▾</span>
@@ -1066,7 +1115,7 @@ export default function App() {
 
                 {isRouteDropdownOpen && (
                   <div className="absolute left-0 top-8 z-40 w-64 bg-[#0a0f19] border border-slate-800 rounded-lg shadow-2xl p-1 max-h-72 overflow-y-auto space-y-0.5 animate-in fade-in">
-                    {knownProjectRoutes.map((r) => (
+                    {currentProjectRoutes.map((r) => (
                       <button
                         key={r.path}
                         onClick={() => {
