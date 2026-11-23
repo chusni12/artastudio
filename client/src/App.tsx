@@ -1122,6 +1122,11 @@ export default function App() {
           await handleTriggerDeploy();
         }}
         isDeploying={isDeploying}
+        onSendToChat={(promptText: string) => {
+          setInputPrompt(promptText);
+          // Otomatis switch ke tab chat jika di HP
+          setMobileTab('chat');
+        }}
       />
     </div>
   );
