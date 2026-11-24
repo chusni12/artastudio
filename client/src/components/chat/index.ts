@@ -1,6 +1,7 @@
 export * from './types';
 export * from './MarkdownRenderer';
 export * from './ChatMessageBubble';
+export * from './ActionLogInspector';
 export * from './CommitCard';
 export * from './CommitDiffModal';
 export * from './ErrorSensorBanner';

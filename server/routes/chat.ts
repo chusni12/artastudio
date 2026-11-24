@@ -78,6 +78,7 @@ const handleSendMessage = (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     status: 'analyzing',
     statusMessage: 'Menghubungkan ke OpenCode AI Engine...',
+    actionLogs: [],
   };
 
   session.messages.push(assistantMsg);
@@ -98,6 +99,33 @@ const handleSendMessage = (req: Request, res: Response) => {
       projectPath: session.projectPath || projectPath,
       sessionId,
       engineMode,
+      onActionLog: (log) => {
+        if (!assistantMsg.actionLogs) {
+          assistantMsg.actionLogs = [];
+        }
+        const existingIdx = assistantMsg.actionLogs.findIndex((l) => l.id === log.id);
+        if (existingIdx >= 0) {
+          assistantMsg.actionLogs[existingIdx] = log;
+        } else {
+          assistantMsg.actionLogs.push(log);
+        }
+
+        broadcastWebSocketEvent('chat', 'message:action_log', {
+          id: assistantMsg.id,
+          messageId: assistantMsg.id,
+          actionLog: log,
+          actionLogs: assistantMsg.actionLogs,
+          message: assistantMsg,
+        });
+
+        broadcastSSE(sessionId, {
+          type: 'action_log',
+          messageId: assistantMsg.id,
+          actionLog: log,
+          actionLogs: assistantMsg.actionLogs,
+          message: assistantMsg,
+        });
+      },
       onChunk: (delta, accumulated) => {
         assistantMsg.text = accumulated;
         broadcastWebSocketEvent('chat', 'message:new', assistantMsg);
@@ -135,6 +163,11 @@ const handleSendMessage = (req: Request, res: Response) => {
       },
     })
     .then((finalText) => {
+      if (assistantMsg.actionLogs) {
+        assistantMsg.actionLogs = assistantMsg.actionLogs.map((l) =>
+          l.status === 'running' ? { ...l, status: 'success' } : l
+        );
+      }
       assistantMsg.status = 'done';
       assistantMsg.statusMessage = undefined;
       assistantMsg.text = finalText;
@@ -143,6 +176,7 @@ const handleSendMessage = (req: Request, res: Response) => {
         id: assistantMsg.id,
         status: 'done',
         message: assistantMsg,
+        actionLogs: assistantMsg.actionLogs,
       });
       broadcastSSE(sessionId, {
         type: 'done',
@@ -150,6 +184,11 @@ const handleSendMessage = (req: Request, res: Response) => {
       });
     })
     .catch((err) => {
+      if (assistantMsg.actionLogs) {
+        assistantMsg.actionLogs = assistantMsg.actionLogs.map((l) =>
+          l.status === 'running' ? { ...l, status: 'failed' } : l
+        );
+      }
       assistantMsg.status = 'error';
       assistantMsg.statusMessage = 'Gagal memproses instruksi';
       assistantMsg.text = `Gagal memproses instruksi: ${err instanceof Error ? err.message : String(err)}`;
@@ -158,6 +197,7 @@ const handleSendMessage = (req: Request, res: Response) => {
         id: assistantMsg.id,
         status: 'error',
         message: assistantMsg,
+        actionLogs: assistantMsg.actionLogs,
       });
       broadcastSSE(sessionId, {
         type: 'error',

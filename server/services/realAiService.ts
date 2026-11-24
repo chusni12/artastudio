@@ -8,10 +8,38 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { EventEmitter } from 'node:events';
+import type { AIActionLog } from '../../shared/types';
 
 const execFileAsync = promisify(execFile);
 
 export type AIStatusType = 'analyzing' | 'thinking' | 'editing' | 'building' | 'done' | 'error';
+
+function parseToolType(toolName: string): 'shell' | 'read' | 'write' | 'edit' | 'info' {
+  const lower = (toolName || '').toLowerCase();
+  if (lower.includes('bash') || lower.includes('shell') || lower.includes('terminal') || lower.includes('exec') || lower.includes('command') || lower.includes('run')) return 'shell';
+  if (lower.includes('read') || lower.includes('cat') || lower.includes('view') || lower.includes('search') || lower.includes('grep') || lower.includes('glob') || lower.includes('find')) return 'read';
+  if (lower.includes('write') || lower.includes('create') || lower.includes('touch') || lower.includes('save')) return 'write';
+  if (lower.includes('edit') || lower.includes('modify') || lower.includes('replace') || lower.includes('patch')) return 'edit';
+  return 'info';
+}
+
+function extractToolCommand(toolName: string, inputOrArgs: any): string {
+  if (typeof inputOrArgs === 'string') return inputOrArgs;
+  if (!inputOrArgs || typeof inputOrArgs !== 'object') return toolName;
+  if (inputOrArgs.command) return inputOrArgs.command;
+  if (inputOrArgs.cmd) return inputOrArgs.cmd;
+  if (inputOrArgs.path || inputOrArgs.filePath || inputOrArgs.file) {
+    const targetFile = inputOrArgs.path || inputOrArgs.filePath || inputOrArgs.file;
+    return `${toolName} ${targetFile}`;
+  }
+  try {
+    const keys = Object.keys(inputOrArgs);
+    if (keys.length === 0) return toolName;
+    return `${toolName} ${JSON.stringify(inputOrArgs)}`;
+  } catch {
+    return toolName;
+  }
+}
 
 export class TokenStreamQueue {
   private queue: string[] = [];
@@ -72,6 +100,7 @@ export interface ExecutePromptOptions {
   engineMode?: 'opencode' | 'agy' | 'custom_api';
   onChunk?: (delta: string, accumulated: string) => void;
   onStatus?: (status: AIStatusType, message?: string) => void;
+  onActionLog?: (log: AIActionLog) => void;
   signal?: AbortSignal;
 }
 
@@ -174,6 +203,7 @@ export class RealAiService extends EventEmitter {
       engineMode = 'opencode',
       onChunk,
       onStatus,
+      onActionLog,
       signal,
     } = options;
 
@@ -209,6 +239,7 @@ export class RealAiService extends EventEmitter {
               execution,
               onChunk,
               onStatus,
+              onActionLog,
             });
           } catch (agyErr: any) {
             console.warn(`[RealAiService] Agy CLI error: ${agyErr.message}. Fallback ke OpenCode/Bridge.`);
@@ -229,6 +260,7 @@ export class RealAiService extends EventEmitter {
             execution,
             onChunk,
             onStatus,
+            onActionLog,
           });
         } catch (cliErr: any) {
           if (abortController.signal.aborted) {
@@ -245,6 +277,7 @@ export class RealAiService extends EventEmitter {
         abortController,
         onChunk,
         onStatus,
+        onActionLog,
       });
     } finally {
       this.activeExecutions.delete(sessionId);
@@ -260,14 +293,28 @@ export class RealAiService extends EventEmitter {
     execution: ActiveExecution;
     onChunk?: (delta: string, accumulated: string) => void;
     onStatus?: (status: AIStatusType, message?: string) => void;
+    onActionLog?: (log: AIActionLog) => void;
   }): Promise<string> {
-    const { agyPath, prompt, projectPath, abortController, execution, onChunk, onStatus } = params;
+    const { agyPath, prompt, projectPath, abortController, execution, onChunk, onStatus, onActionLog } = params;
 
     onStatus?.('analyzing', 'Menjalankan Agy AI Engine...');
+
+    const promptPreview = prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt;
+    const agyActionLog: AIActionLog = {
+      id: `agy_exec_${Date.now()}`,
+      type: 'shell',
+      command: `agy -p "${promptPreview}" --dangerously-skip-permissions`,
+      output: 'Memulai eksekusi task pada sistem...',
+      timestamp: new Date().toISOString(),
+      status: 'running',
+    };
+    onActionLog?.(agyActionLog);
 
     return new Promise<string>((resolve, reject) => {
       const streamQueue = new TokenStreamQueue(onChunk, abortController.signal);
       const isWindows = process.platform === 'win32';
+      let collectedLogs = '';
+
       const child = spawn(agyPath, ['-p', prompt, '--dangerously-skip-permissions'], {
         cwd: projectPath,
         shell: isWindows,
@@ -282,7 +329,21 @@ export class RealAiService extends EventEmitter {
 
       child.stdout?.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
+        collectedLogs += text;
         streamQueue.push(text);
+
+        const cmdMatch = text.match(/(?:(?:Executing|Running|Command|Shell):\s*|\$\s+)(.+)/i);
+        if (cmdMatch) {
+          const subLog: AIActionLog = {
+            id: `agy_cmd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            type: 'shell',
+            command: cmdMatch[1].trim(),
+            output: undefined,
+            timestamp: new Date().toISOString(),
+            status: 'running',
+          };
+          onActionLog?.(subLog);
+        }
       });
 
       child.stderr?.on('data', (chunk: Buffer) => {
@@ -295,12 +356,19 @@ export class RealAiService extends EventEmitter {
       });
 
       child.on('close', async (code) => {
+        agyActionLog.status = code === 0 ? 'success' : 'failed';
+        agyActionLog.output = collectedLogs.slice(0, 500) || (code === 0 ? 'Selesai dieksekusi.' : `Exit code ${code}`);
+        onActionLog?.(agyActionLog);
+
         const final = await streamQueue.drain();
         onStatus?.('done', 'Selesai');
         resolve(final.trim() || 'Instruksi selesai dieksekusi oleh Agy.');
       });
 
       child.on('error', (err) => {
+        agyActionLog.status = 'failed';
+        agyActionLog.output = err.message;
+        onActionLog?.(agyActionLog);
         reject(err);
       });
     });
@@ -315,8 +383,9 @@ export class RealAiService extends EventEmitter {
     execution: ActiveExecution;
     onChunk?: (delta: string, accumulated: string) => void;
     onStatus?: (status: AIStatusType, message?: string) => void;
+    onActionLog?: (log: AIActionLog) => void;
   }): Promise<string> {
-    const { openCodePath, prompt, projectPath, abortController, execution, onChunk, onStatus } = params;
+    const { openCodePath, prompt, projectPath, abortController, execution, onChunk, onStatus, onActionLog } = params;
     const args = ['run', '--format', 'json', '--thinking', '--auto', prompt];
     const isWindows = process.platform === 'win32';
 
@@ -326,6 +395,7 @@ export class RealAiService extends EventEmitter {
       const streamQueue = new TokenStreamQueue(onChunk, abortController.signal);
       let accumulatedReasoning = '';
       let lineBuffer = '';
+      const actionLogsMap = new Map<string, AIActionLog>();
 
       const child = spawn(openCodePath, args, {
         cwd: projectPath,
@@ -358,9 +428,60 @@ export class RealAiService extends EventEmitter {
               const reasoningText = event.part?.text || event.text || event.content || '';
               accumulatedReasoning += reasoningText;
               onStatus?.('thinking', 'AI sedang menganalisis arsitektur & merancang solusi...');
-            } else if (eventType === 'tool_use' || eventType === 'tool') {
-              const toolName = event.part?.tool || event.tool || event.part?.state?.title || 'operasi';
+            } else if (
+              eventType === 'tool_use' ||
+              eventType === 'tool_call' ||
+              eventType === 'tool' ||
+              eventType === 'action'
+            ) {
+              const toolName = event.part?.tool || event.tool || event.part?.name || event.name || event.part?.state?.title || 'operasi';
+              const callId = event.part?.id || event.part?.callId || event.id || event.call_id || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const input = event.part?.input || event.part?.args || event.input || event.args || {};
+              const command = extractToolCommand(toolName, input);
+              const type = parseToolType(toolName);
+              const rawOutput = event.part?.output ?? event.output ?? event.part?.state?.output;
+              const outputStr = typeof rawOutput === 'string' ? rawOutput : (rawOutput ? JSON.stringify(rawOutput, null, 2) : undefined);
+              const status: 'running' | 'success' | 'failed' =
+                event.part?.state?.status === 'failed' || event.status === 'failed'
+                  ? 'failed'
+                  : outputStr !== undefined
+                  ? 'success'
+                  : 'running';
+
+              const logItem: AIActionLog = {
+                id: callId,
+                type,
+                command,
+                output: outputStr,
+                timestamp: new Date().toISOString(),
+                status,
+              };
+              actionLogsMap.set(callId, logItem);
+              onActionLog?.(logItem);
               onStatus?.('editing', `OpenCode menjalankan aksi: ${toolName}...`);
+            } else if (eventType === 'tool_result' || eventType === 'tool_output') {
+              const callId = event.part?.id || event.part?.callId || event.id || event.call_id;
+              const rawOutput = event.part?.output ?? event.output ?? event.part?.result ?? event.result ?? event.content;
+              const outputStr = typeof rawOutput === 'string' ? rawOutput : (rawOutput ? JSON.stringify(rawOutput, null, 2) : '');
+              const isError = Boolean(event.is_error || event.part?.is_error || event.error);
+
+              if (callId && actionLogsMap.has(callId)) {
+                const existing = actionLogsMap.get(callId)!;
+                existing.output = outputStr || existing.output;
+                existing.status = isError ? 'failed' : 'success';
+                onActionLog?.(existing);
+              } else {
+                const fallbackLog: AIActionLog = {
+                  id: callId || `tool_res_${Date.now()}`,
+                  type: 'info',
+                  command: event.tool || 'tool execution',
+                  output: outputStr,
+                  timestamp: new Date().toISOString(),
+                  status: isError ? 'failed' : 'success',
+                };
+                actionLogsMap.set(fallbackLog.id, fallbackLog);
+                onActionLog?.(fallbackLog);
+              }
             } else if (eventType === 'text' || eventType === 'delta') {
               const delta = event.part?.text || event.text || event.delta || event.content || '';
               if (delta) {
@@ -368,7 +489,12 @@ export class RealAiService extends EventEmitter {
                 streamQueue.push(delta);
               }
             } else if (eventType === 'step_finish') {
-              // langkah selesai
+              for (const [_, log] of actionLogsMap.entries()) {
+                if (log.status === 'running') {
+                  log.status = 'success';
+                  onActionLog?.(log);
+                }
+              }
             }
           } catch {
             streamQueue.push(line + '\n');
@@ -386,6 +512,13 @@ export class RealAiService extends EventEmitter {
       });
 
       child.on('close', async (code) => {
+        for (const [_, log] of actionLogsMap.entries()) {
+          if (log.status === 'running') {
+            log.status = code === 0 ? 'success' : 'failed';
+            onActionLog?.(log);
+          }
+        }
+
         if (lineBuffer.trim()) {
           try {
             const event = JSON.parse(lineBuffer.trim());
@@ -417,14 +550,55 @@ export class RealAiService extends EventEmitter {
     abortController: AbortController;
     onChunk?: (delta: string, accumulated: string) => void;
     onStatus?: (status: AIStatusType, message?: string) => void;
+    onActionLog?: (log: AIActionLog) => void;
   }): Promise<string> {
-    const { prompt, projectPath, abortController, onChunk, onStatus } = params;
+    const { prompt, projectPath, abortController, onChunk, onStatus, onActionLog } = params;
 
     onStatus?.('analyzing', `Menganalisis proyek (${path.basename(projectPath)})...`);
+    const log1: AIActionLog = {
+      id: `act_${Date.now()}_1`,
+      type: 'shell',
+      command: 'git status',
+      output: undefined,
+      timestamp: new Date().toISOString(),
+      status: 'running',
+    };
+    onActionLog?.(log1);
     await this.delay(300, abortController.signal);
 
+    let gitOutput = 'On branch main\nnothing to commit, working tree clean';
+    try {
+      const { stdout } = await execFileAsync('git', ['status', '--short'], { cwd: projectPath });
+      gitOutput = stdout.trim() || 'Cabang sinkron, tidak ada berkas yang berubah.';
+    } catch {}
+    log1.output = gitOutput;
+    log1.status = 'success';
+    onActionLog?.(log1);
+
     onStatus?.('thinking', `Memeriksa dependensi dan file arsitektur...`);
+    const log2: AIActionLog = {
+      id: `act_${Date.now()}_2`,
+      type: 'read',
+      command: 'read package.json',
+      output: undefined,
+      timestamp: new Date().toISOString(),
+      status: 'running',
+    };
+    onActionLog?.(log2);
     await this.delay(350, abortController.signal);
+
+    let pkgSummary = 'package.json termuat dengan aman';
+    try {
+      const pkgPath = path.join(projectPath, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const raw = fs.readFileSync(pkgPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        pkgSummary = `Dependencies (${Object.keys(parsed.dependencies || {}).length}), DevDependencies (${Object.keys(parsed.devDependencies || {}).length})`;
+      }
+    } catch {}
+    log2.output = pkgSummary;
+    log2.status = 'success';
+    onActionLog?.(log2);
 
     onStatus?.('editing', `Menyusun respons terstruktur...`);
     await this.delay(200, abortController.signal);

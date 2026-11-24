@@ -99,6 +99,17 @@ export interface ProcessLog {
   message: string;
 }
 
+export interface AIActionLog {
+  id: string;
+  type: 'shell' | 'read' | 'write' | 'edit' | 'info';
+  command?: string;
+  output?: string;
+  timestamp: string;
+  status: 'running' | 'success' | 'failed';
+}
+
+export type ActionLogItem = AIActionLog;
+
 export interface ChatMessage {
   id: string;
   sender: 'user' | 'assistant' | 'system';
@@ -109,6 +120,7 @@ export interface ChatMessage {
   statusMessage?: string;
   type?: 'text' | 'commit';
   commit?: any;
+  actionLogs?: AIActionLog[];
 }
 
 export interface ChatSession {

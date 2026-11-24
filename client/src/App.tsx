@@ -5,6 +5,7 @@ import { AIProviderSettingsModal } from './components/AIProviderSettingsModal';
 import { SecurityCheckModal } from './components/SecurityCheckModal';
 import { CommitDiffModal } from './components/chat/CommitDiffModal';
 import { CommitCard } from './components/chat/CommitCard';
+import { ActionLogInspector } from './components/chat/ActionLogInspector';
 import type { CommitItem } from './components/chat/types';
 import type { SecurityAuditReport } from '../../shared/types';
 import React, { useState, useEffect, useRef } from 'react';
@@ -42,6 +43,7 @@ import type {
   ChatMessage,
   ProcessStatus,
   WebSocketEvent,
+  AIActionLog,
 } from '../../shared/types';
 
 export default function App() {
@@ -107,6 +109,7 @@ export default function App() {
 
   // State: Chat & Sensor
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const latestAssistantMsgId = messages.filter((m) => m.sender === 'assistant').slice(-1)[0]?.id;
   const [inputPrompt, setInputPrompt] = useState<string>('');
   const [isSendingPrompt, setIsSendingPrompt] = useState<boolean>(false);
   const [activeErrors, setActiveErrors] = useState<DetectedError[]>([]);
@@ -295,6 +298,7 @@ export default function App() {
         const targetId = chunkData.id || chunkData.message?.id;
         const newText = chunkData.accumulated ?? chunkData.text ?? chunkData.message?.text;
         const newStatus = chunkData.status || chunkData.message?.status;
+        const newActionLogs = chunkData.actionLogs || chunkData.message?.actionLogs;
         if (targetId) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -303,6 +307,7 @@ export default function App() {
                     ...m,
                     text: newText !== undefined ? newText : (m.text + (chunkData.delta || '')),
                     status: newStatus || m.status,
+                    actionLogs: newActionLogs || m.actionLogs,
                   }
                 : m
             )
@@ -313,6 +318,7 @@ export default function App() {
         const targetId = statusData.id || statusData.message?.id;
         const newStatus = statusData.status;
         const statusMsg = statusData.statusMessage || statusData.message;
+        const newActionLogs = statusData.actionLogs || statusData.message?.actionLogs;
         if (targetId) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -322,9 +328,35 @@ export default function App() {
                     status: newStatus,
                     statusMessage: typeof statusMsg === 'string' ? statusMsg : (m as any).statusMessage,
                     text: statusData.text !== undefined ? statusData.text : m.text,
+                    actionLogs: newActionLogs || m.actionLogs,
                   }
                 : m
             )
+          );
+        }
+      } else if (payload.event === 'message:action_log' || payload.event === 'action_log') {
+        const logData = payload.data as any;
+        const targetId = logData.id || logData.messageId || logData.message?.id;
+        const newLog = logData.actionLog as AIActionLog | undefined;
+        const allLogs = logData.actionLogs as AIActionLog[] | undefined;
+        if (targetId) {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== targetId) return m;
+              let updatedLogs = allLogs ? [...allLogs] : [...(m.actionLogs || [])];
+              if (!allLogs && newLog) {
+                const idx = updatedLogs.findIndex((l) => l.id === newLog.id);
+                if (idx >= 0) {
+                  updatedLogs[idx] = newLog;
+                } else {
+                  updatedLogs.push(newLog);
+                }
+              }
+              return {
+                ...m,
+                actionLogs: updatedLogs,
+              };
+            })
           );
         }
       }
@@ -682,10 +714,33 @@ export default function App() {
                         ...m,
                         status: sseData.status,
                         statusMessage: typeof sseData.message === 'string' ? sseData.message : undefined,
+                        actionLogs: sseData.actionLogs || sseData.assistantMsg?.actionLogs || m.actionLogs,
                       }
                     : m
                 )
               );
+            } else if (sseData.type === 'action_log') {
+              const targetId = sseData.messageId || sseData.id || sseData.message?.id;
+              if (targetId) {
+                setMessages((prev) =>
+                  prev.map((m) => {
+                    if (m.id !== targetId) return m;
+                    let updatedLogs = sseData.actionLogs ? [...sseData.actionLogs] : [...(m.actionLogs || [])];
+                    if (!sseData.actionLogs && sseData.actionLog) {
+                      const idx = updatedLogs.findIndex((l: AIActionLog) => l.id === sseData.actionLog.id);
+                      if (idx >= 0) {
+                        updatedLogs[idx] = sseData.actionLog;
+                      } else {
+                        updatedLogs.push(sseData.actionLog);
+                      }
+                    }
+                    return {
+                      ...m,
+                      actionLogs: updatedLogs,
+                    };
+                  })
+                );
+              }
             }
           } catch {}
         };
@@ -1133,55 +1188,14 @@ export default function App() {
                             Sedang memproses instruksi Anda...
                           </p>
                         ) : null}
-                        {m.status && m.status !== 'done' && (
-                          <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
-                            <span className="relative flex h-2 w-2 flex-shrink-0">
-                              <span
-                                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                                  m.status === 'editing'
-                                    ? 'bg-amber-400'
-                                    : m.status === 'thinking'
-                                    ? 'bg-indigo-400'
-                                    : m.status === 'building'
-                                    ? 'bg-emerald-400'
-                                    : 'bg-cyan-400'
-                                }`}
-                              />
-                              <span
-                                className={`relative inline-flex rounded-full h-2 w-2 ${
-                                  m.status === 'editing'
-                                    ? 'bg-amber-500'
-                                    : m.status === 'thinking'
-                                    ? 'bg-indigo-500'
-                                    : m.status === 'building'
-                                    ? 'bg-emerald-500'
-                                    : 'bg-cyan-500'
-                                }`}
-                              />
-                            </span>
-                            <span
-                              className={`font-semibold truncate ${
-                                m.status === 'editing'
-                                  ? 'text-amber-300'
-                                  : m.status === 'thinking'
-                                  ? 'text-indigo-300'
-                                  : m.status === 'building'
-                                  ? 'text-emerald-300'
-                                  : 'text-cyan-300'
-                              }`}
-                            >
-                              {(m as any).statusMessage ||
-                                (m.status === 'analyzing'
-                                  ? 'Menganalisis arsitektur proyek...'
-                                  : m.status === 'thinking'
-                                  ? 'AI sedang merancang solusi kode...'
-                                  : m.status === 'editing'
-                                  ? 'Menerapkan perubahan berkas...'
-                                  : m.status === 'building'
-                                  ? 'Memverifikasi sistem...'
-                                  : `Status: ${m.status}`)}
-                            </span>
-                          </div>
+                        {/* Collapsible Action Log & Tool Execution Inspector (Ala Orca / Lovable) */}
+                        {m.sender === 'assistant' && (
+                          <ActionLogInspector
+                            actionLogs={m.actionLogs}
+                            status={m.status}
+                            statusMessage={(m as any).statusMessage}
+                            isLatestAssistant={m.id === latestAssistantMsgId}
+                          />
                         )}
                       </div>
                     </div>
@@ -1941,55 +1955,14 @@ export default function App() {
                               Sedang memproses instruksi Anda...
                             </p>
                           ) : null}
-                          {m.status && m.status !== 'done' && (
-                            <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
-                              <span className="relative flex h-2 w-2 flex-shrink-0">
-                                <span
-                                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                                    m.status === 'editing'
-                                      ? 'bg-amber-400'
-                                      : m.status === 'thinking'
-                                      ? 'bg-indigo-400'
-                                      : m.status === 'building'
-                                      ? 'bg-emerald-400'
-                                      : 'bg-cyan-400'
-                                  }`}
-                                />
-                                <span
-                                  className={`relative inline-flex rounded-full h-2 w-2 ${
-                                    m.status === 'editing'
-                                      ? 'bg-amber-500'
-                                      : m.status === 'thinking'
-                                      ? 'bg-indigo-500'
-                                      : m.status === 'building'
-                                      ? 'bg-emerald-500'
-                                      : 'bg-cyan-500'
-                                  }`}
-                                />
-                              </span>
-                              <span
-                                className={`font-semibold truncate ${
-                                  m.status === 'editing'
-                                    ? 'text-amber-300'
-                                    : m.status === 'thinking'
-                                    ? 'text-indigo-300'
-                                    : m.status === 'building'
-                                    ? 'text-emerald-300'
-                                    : 'text-cyan-300'
-                                }`}
-                              >
-                                {(m as any).statusMessage ||
-                                  (m.status === 'analyzing'
-                                    ? 'Menganalisis arsitektur proyek...'
-                                    : m.status === 'thinking'
-                                    ? 'AI sedang merancang solusi kode...'
-                                    : m.status === 'editing'
-                                    ? 'Menerapkan perubahan berkas...'
-                                    : m.status === 'building'
-                                    ? 'Memverifikasi sistem...'
-                                    : `Status: ${m.status}`)}
-                              </span>
-                            </div>
+                          {/* Collapsible Action Log & Tool Execution Inspector (Ala Orca / Lovable) */}
+                          {m.sender === 'assistant' && (
+                            <ActionLogInspector
+                              actionLogs={m.actionLogs}
+                              status={m.status}
+                              statusMessage={(m as any).statusMessage}
+                              isLatestAssistant={m.id === latestAssistantMsgId}
+                            />
                           )}
                         </div>
                       </div>

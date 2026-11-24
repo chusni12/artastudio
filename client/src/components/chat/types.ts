@@ -1,5 +1,16 @@
 export type MessageSender = 'user' | 'assistant' | 'system';
 
+export interface AIActionLog {
+  id: string;
+  type: 'shell' | 'read' | 'write' | 'edit' | 'info';
+  command?: string;
+  output?: string;
+  timestamp: string;
+  status: 'running' | 'success' | 'failed';
+}
+
+export type ActionLogItem = AIActionLog;
+
 export interface ChatMessage {
   id: string;
   sender: MessageSender;
@@ -7,6 +18,7 @@ export interface ChatMessage {
   timestamp: string;
   isStreaming?: boolean;
   avatar?: string;
+  actionLogs?: AIActionLog[];
   metadata?: {
     model?: string;
     tokens?: number;
