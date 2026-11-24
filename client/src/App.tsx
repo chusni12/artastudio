@@ -170,6 +170,34 @@ export default function App() {
   const [isSidebarPinned, setIsSidebarPinned] = useState<boolean>(true);
   const [isSidebarHovered, setIsSidebarHovered] = useState<boolean>(false);
   const [deployNotification, setDeployNotification] = useState<string | null>(null);
+  const [gitToast, setGitToast] = useState<{
+    id: string;
+    message: string;
+    shortHash: string;
+    author?: string;
+    commit?: CommitItem;
+  } | null>(null);
+
+  // Auto-dismiss git toast after 7s
+  useEffect(() => {
+    if (gitToast) {
+      const timer = setTimeout(() => {
+        setGitToast(null);
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+  }, [gitToast]);
+
+  // Sync active project path to backend Git Watcher
+  useEffect(() => {
+    if (activePath) {
+      fetch('/api/git/active-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath: activePath }),
+      }).catch(() => {});
+    }
+  }, [activePath]);
 
   // Layout & Resizing States (Desktop)
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
@@ -326,6 +354,75 @@ export default function App() {
           setLogs((prev) => [...prev.slice(-300), `[Git Clone] ${data.text}`]);
         }
         window.dispatchEvent(new CustomEvent('artastudio:clone:progress', { detail: data }));
+      }
+    } else if (channel === 'git') {
+      if (payload.event === 'commit:new') {
+        const { commit, projectPath } = (payload.data as any) || {};
+        if (commit) {
+          const commitItem: CommitItem = {
+            id: commit.hash || commit.id,
+            hash: commit.hash,
+            shortHash: commit.shortHash || commit.hash?.slice(0, 7) || '',
+            message: commit.message || 'Update commit baru',
+            author: commit.author || 'Developer',
+            timestamp:
+              typeof commit.timestamp === 'string' && commit.timestamp.includes(':')
+                ? commit.timestamp
+                : new Date(commit.date || Date.now()).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }),
+            branch: commit.branch || activeBranch?.name || 'main',
+            filesChanged: commit.filesChanged ?? 1,
+            additions: commit.additions ?? 0,
+            deletions: commit.deletions ?? 0,
+            isGitHubSync: true,
+            source: 'github',
+          };
+
+          const commitMsg: ChatMessage = {
+            id: `commit_${commit.hash || commit.shortHash || Date.now()}`,
+            sender: 'system',
+            text: commit.message || 'Update commit baru',
+            timestamp: commit.date || commit.timestamp || new Date().toISOString(),
+            type: 'commit' as any,
+            commitHash: commit.hash,
+            commit: commitItem,
+          };
+
+          // Masukkan kartu commit ke feed messages chat aktif
+          setMessages((prev) => {
+            if (prev.some((m) => m.commitHash === commit.hash || m.id === commitMsg.id)) {
+              return prev;
+            }
+            return [...prev, commitMsg];
+          });
+
+          // Perbarui list commits lokal agar sinkron
+          setCommits((prev) => {
+            if (prev.some((c) => c.hash === commit.hash)) return prev;
+            return [
+              {
+                hash: commit.hash,
+                shortHash: commit.shortHash || commit.hash.slice(0, 7),
+                message: commit.message,
+                author: commit.author || 'Developer',
+                date: commit.date || new Date().toISOString(),
+                type: commit.type || 'other',
+              },
+              ...prev,
+            ];
+          });
+
+          // Tampilkan toast notifikasi di pojok kiri bawah
+          setGitToast({
+            id: commit.hash || String(Date.now()),
+            message: commit.message || 'Update commit baru',
+            shortHash: commit.shortHash || commit.hash?.slice(0, 7) || '',
+            author: commit.author || 'Developer',
+            commit: commitItem,
+          });
+        }
       }
     }
   };
@@ -973,89 +1070,123 @@ export default function App() {
 
               {/* Chat Feed */}
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                {messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1 px-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        {m.sender === 'user' ? 'Anda' : 'ArtaStudio AI'}
-                      </span>
-                      <span className="text-[10px] text-slate-600">
-                        {new Date(m.timestamp).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
+                {messages.map((m) =>
+                  m.type === 'commit' || (m as any).commit ? (
+                    <div key={m.id} className="w-full my-1">
+                      <CommitCard
+                        commit={
+                          (m as any).commit || {
+                            id: m.id,
+                            hash: m.commitHash || m.id,
+                            shortHash: (m.commitHash || m.id).slice(0, 7),
+                            message: m.text,
+                            author: 'Developer',
+                            timestamp: new Date(m.timestamp).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            }),
+                            branch: activeBranch?.name || 'main',
+                            filesChanged: 1,
+                            additions: 0,
+                            deletions: 0,
+                            isGitHubSync: true,
+                            source: 'github',
+                          }
+                        }
+                        onViewDetail={(commit) => {
+                          setSelectedCommitDiff(commit);
+                          setIsCommitDiffOpen(true);
+                        }}
+                        onPreview={() => {
+                          setMobileView('preview');
+                        }}
+                        isCurrentPreview={false}
+                      />
                     </div>
+                  ) : (
                     <div
-                      className={`max-w-[88%] rounded-2xl p-3 text-xs leading-relaxed ${
-                        m.sender === 'user'
-                          ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-xs shadow-md shadow-amber-500/10'
-                          : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-xs shadow-md'
-                      }`}
+                      key={m.id}
+                      className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
                     >
-                      {m.text ? (
-                        <p className="whitespace-pre-wrap">{m.text}</p>
-                      ) : m.sender === 'assistant' && m.status !== 'done' ? (
-                        <p className="text-slate-400 italic text-[11px] animate-pulse">
-                          Sedang memproses instruksi Anda...
-                        </p>
-                      ) : null}
-                      {m.status && m.status !== 'done' && (
-                        <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
-                          <span className="relative flex h-2 w-2 flex-shrink-0">
+                      <div className="flex items-center gap-1.5 mb-1 px-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          {m.sender === 'user' ? 'Anda' : 'ArtaStudio AI'}
+                        </span>
+                        <span className="text-[10px] text-slate-600">
+                          {new Date(m.timestamp).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      <div
+                        className={`max-w-[88%] rounded-2xl p-3 text-xs leading-relaxed ${
+                          m.sender === 'user'
+                            ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-xs shadow-md shadow-amber-500/10'
+                            : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-xs shadow-md'
+                        }`}
+                      >
+                        {m.text ? (
+                          <p className="whitespace-pre-wrap">{m.text}</p>
+                        ) : m.sender === 'assistant' && m.status !== 'done' ? (
+                          <p className="text-slate-400 italic text-[11px] animate-pulse">
+                            Sedang memproses instruksi Anda...
+                          </p>
+                        ) : null}
+                        {m.status && m.status !== 'done' && (
+                          <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
+                            <span className="relative flex h-2 w-2 flex-shrink-0">
+                              <span
+                                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                  m.status === 'editing'
+                                    ? 'bg-amber-400'
+                                    : m.status === 'thinking'
+                                    ? 'bg-indigo-400'
+                                    : m.status === 'building'
+                                    ? 'bg-emerald-400'
+                                    : 'bg-cyan-400'
+                                }`}
+                              />
+                              <span
+                                className={`relative inline-flex rounded-full h-2 w-2 ${
+                                  m.status === 'editing'
+                                    ? 'bg-amber-500'
+                                    : m.status === 'thinking'
+                                    ? 'bg-indigo-500'
+                                    : m.status === 'building'
+                                    ? 'bg-emerald-500'
+                                    : 'bg-cyan-500'
+                                }`}
+                              />
+                            </span>
                             <span
-                              className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                              className={`font-semibold truncate ${
                                 m.status === 'editing'
-                                  ? 'bg-amber-400'
+                                  ? 'text-amber-300'
                                   : m.status === 'thinking'
-                                  ? 'bg-indigo-400'
+                                  ? 'text-indigo-300'
                                   : m.status === 'building'
-                                  ? 'bg-emerald-400'
-                                  : 'bg-cyan-400'
+                                  ? 'text-emerald-300'
+                                  : 'text-cyan-300'
                               }`}
-                            />
-                            <span
-                              className={`relative inline-flex rounded-full h-2 w-2 ${
-                                m.status === 'editing'
-                                  ? 'bg-amber-500'
+                            >
+                              {(m as any).statusMessage ||
+                                (m.status === 'analyzing'
+                                  ? 'Menganalisis arsitektur proyek...'
                                   : m.status === 'thinking'
-                                  ? 'bg-indigo-500'
+                                  ? 'AI sedang merancang solusi kode...'
+                                  : m.status === 'editing'
+                                  ? 'Menerapkan perubahan berkas...'
                                   : m.status === 'building'
-                                  ? 'bg-emerald-500'
-                                  : 'bg-cyan-500'
-                              }`}
-                            />
-                          </span>
-                          <span
-                            className={`font-semibold truncate ${
-                              m.status === 'editing'
-                                ? 'text-amber-300'
-                                : m.status === 'thinking'
-                                ? 'text-indigo-300'
-                                : m.status === 'building'
-                                ? 'text-emerald-300'
-                                : 'text-cyan-300'
-                            }`}
-                          >
-                            {(m as any).statusMessage ||
-                              (m.status === 'analyzing'
-                                ? 'Menganalisis arsitektur proyek...'
-                                : m.status === 'thinking'
-                                ? 'AI sedang merancang solusi kode...'
-                                : m.status === 'editing'
-                                ? 'Menerapkan perubahan berkas...'
-                                : m.status === 'building'
-                                ? 'Memverifikasi sistem...'
-                                : `Status: ${m.status}`)}
-                          </span>
-                        </div>
-                      )}
+                                  ? 'Memverifikasi sistem...'
+                                  : `Status: ${m.status}`)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                )}
 
                 {/* Timeline Commit Cards (Standar Lovable Image 2) */}
                 {commitItems.slice(0, 1).map((item) => (
@@ -1747,89 +1878,123 @@ export default function App() {
 
                 {/* Message Feed */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
-                    >
-                      <div className="flex items-center gap-2 mb-1 px-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          {m.sender === 'user' ? 'Pengguna' : 'ArtaStudio AI'}
-                        </span>
-                        <span className="text-[10px] text-slate-600">
-                          {new Date(m.timestamp).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
+                  {messages.map((m) =>
+                    m.type === 'commit' || (m as any).commit ? (
+                      <div key={m.id} className="w-full">
+                        <CommitCard
+                          commit={
+                            (m as any).commit || {
+                              id: m.id,
+                              hash: m.commitHash || m.id,
+                              shortHash: (m.commitHash || m.id).slice(0, 7),
+                              message: m.text,
+                              author: 'Developer',
+                              timestamp: new Date(m.timestamp).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              }),
+                              branch: activeBranch?.name || 'main',
+                              filesChanged: 1,
+                              additions: 0,
+                              deletions: 0,
+                              isGitHubSync: true,
+                              source: 'github',
+                            }
+                          }
+                          onViewDetail={(commit) => {
+                            setSelectedCommitDiff(commit);
+                            setIsCommitDiffOpen(true);
+                          }}
+                          onPreview={() => {
+                            setMobileView('preview');
+                          }}
+                          isCurrentPreview={false}
+                        />
                       </div>
+                    ) : (
                       <div
-                        className={`max-w-[85%] rounded-xl p-3 text-xs leading-relaxed ${
-                          m.sender === 'user'
-                            ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-none shadow-md shadow-amber-500/10'
-                            : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-none'
-                        }`}
+                        key={m.id}
+                        className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
                       >
-                        {m.text ? (
-                          <p className="whitespace-pre-wrap">{m.text}</p>
-                        ) : m.sender === 'assistant' && m.status !== 'done' ? (
-                          <p className="text-slate-400 italic text-[11px] animate-pulse">
-                            Sedang memproses instruksi Anda...
-                          </p>
-                        ) : null}
-                        {m.status && m.status !== 'done' && (
-                          <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
-                            <span className="relative flex h-2 w-2 flex-shrink-0">
+                        <div className="flex items-center gap-2 mb-1 px-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            {m.sender === 'user' ? 'Pengguna' : 'ArtaStudio AI'}
+                          </span>
+                          <span className="text-[10px] text-slate-600">
+                            {new Date(m.timestamp).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                        <div
+                          className={`max-w-[85%] rounded-xl p-3 text-xs leading-relaxed ${
+                            m.sender === 'user'
+                              ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-none shadow-md shadow-amber-500/10'
+                              : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-none'
+                          }`}
+                        >
+                          {m.text ? (
+                            <p className="whitespace-pre-wrap">{m.text}</p>
+                          ) : m.sender === 'assistant' && m.status !== 'done' ? (
+                            <p className="text-slate-400 italic text-[11px] animate-pulse">
+                              Sedang memproses instruksi Anda...
+                            </p>
+                          ) : null}
+                          {m.status && m.status !== 'done' && (
+                            <div className="mt-2 flex items-center gap-2 text-[10px] border-t border-slate-800/80 pt-2">
+                              <span className="relative flex h-2 w-2 flex-shrink-0">
+                                <span
+                                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                    m.status === 'editing'
+                                      ? 'bg-amber-400'
+                                      : m.status === 'thinking'
+                                      ? 'bg-indigo-400'
+                                      : m.status === 'building'
+                                      ? 'bg-emerald-400'
+                                      : 'bg-cyan-400'
+                                  }`}
+                                />
+                                <span
+                                  className={`relative inline-flex rounded-full h-2 w-2 ${
+                                    m.status === 'editing'
+                                      ? 'bg-amber-500'
+                                      : m.status === 'thinking'
+                                      ? 'bg-indigo-500'
+                                      : m.status === 'building'
+                                      ? 'bg-emerald-500'
+                                      : 'bg-cyan-500'
+                                  }`}
+                                />
+                              </span>
                               <span
-                                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                className={`font-semibold truncate ${
                                   m.status === 'editing'
-                                    ? 'bg-amber-400'
+                                    ? 'text-amber-300'
                                     : m.status === 'thinking'
-                                    ? 'bg-indigo-400'
+                                    ? 'text-indigo-300'
                                     : m.status === 'building'
-                                    ? 'bg-emerald-400'
-                                    : 'bg-cyan-400'
+                                    ? 'text-emerald-300'
+                                    : 'text-cyan-300'
                                 }`}
-                              />
-                              <span
-                                className={`relative inline-flex rounded-full h-2 w-2 ${
-                                  m.status === 'editing'
-                                    ? 'bg-amber-500'
+                              >
+                                {(m as any).statusMessage ||
+                                  (m.status === 'analyzing'
+                                    ? 'Menganalisis arsitektur proyek...'
                                     : m.status === 'thinking'
-                                    ? 'bg-indigo-500'
+                                    ? 'AI sedang merancang solusi kode...'
+                                    : m.status === 'editing'
+                                    ? 'Menerapkan perubahan berkas...'
                                     : m.status === 'building'
-                                    ? 'bg-emerald-500'
-                                    : 'bg-cyan-500'
-                                }`}
-                              />
-                            </span>
-                            <span
-                              className={`font-semibold truncate ${
-                                m.status === 'editing'
-                                  ? 'text-amber-300'
-                                  : m.status === 'thinking'
-                                  ? 'text-indigo-300'
-                                  : m.status === 'building'
-                                  ? 'text-emerald-300'
-                                  : 'text-cyan-300'
-                              }`}
-                            >
-                              {(m as any).statusMessage ||
-                                (m.status === 'analyzing'
-                                  ? 'Menganalisis arsitektur proyek...'
-                                  : m.status === 'thinking'
-                                  ? 'AI sedang merancang solusi kode...'
-                                  : m.status === 'editing'
-                                  ? 'Menerapkan perubahan berkas...'
-                                  : m.status === 'building'
-                                  ? 'Memverifikasi sistem...'
-                                  : `Status: ${m.status}`)}
-                            </span>
-                          </div>
-                        )}
+                                    ? 'Memverifikasi sistem...'
+                                    : `Status: ${m.status}`)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  )}
                   <div ref={chatScrollRef}></div>
                 </div>
 
@@ -2130,6 +2295,54 @@ export default function App() {
           setMobileView('preview');
         }}
       />
+      {/* Floating Toast Notifikasi Pojok Kiri Bawah (1:1 Standar Lovable) */}
+      {gitToast && (
+        <div className="fixed bottom-5 left-5 z-50 flex items-center gap-3 bg-slate-900/95 border border-amber-500/40 text-slate-100 shadow-2xl shadow-amber-500/10 rounded-xl p-3.5 backdrop-blur-md max-w-sm sm:max-w-md animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 shrink-0 shadow-[0_0_12px_rgba(245,158,11,0.3)]">
+            <GitCommit className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0 pr-1">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wide">
+                Commit Baru Terdeteksi
+              </span>
+              <span className="font-mono text-[10px] bg-slate-800 text-amber-300 px-1.5 py-0.2 rounded border border-slate-700">
+                {gitToast.shortHash}
+              </span>
+            </div>
+            <p className="text-xs text-slate-200 truncate font-medium">
+              {gitToast.message}
+            </p>
+            {gitToast.author && (
+              <span className="text-[10px] text-slate-400">
+                oleh {gitToast.author}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {gitToast.commit && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCommitDiff(gitToast.commit!);
+                  setIsCommitDiffOpen(true);
+                  setGitToast(null);
+                }}
+                className="px-2.5 py-1 text-[11px] font-semibold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-md transition-all shadow-sm cursor-pointer"
+              >
+                Detail
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setGitToast(null)}
+              className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

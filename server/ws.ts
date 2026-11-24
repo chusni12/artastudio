@@ -16,7 +16,7 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
   wss.on('connection', (ws: WebSocket) => {
     const extWs = ws as ExtendedWebSocket;
     extWs.isAlive = true;
-    extWs.subscriptions = new Set<string>(['logs', 'errors', 'chat', 'system', 'workspaces']);
+    extWs.subscriptions = new Set<string>(['logs', 'errors', 'chat', 'system', 'workspaces', 'process', 'git']);
 
     // Send initial connected greeting
     const welcomeMsg: WebSocketEvent<{ status: string; clientCount: number }> = {

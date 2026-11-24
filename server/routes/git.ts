@@ -4,9 +4,157 @@ import util from 'util';
 import path from 'path';
 import fs from 'fs';
 import type { CommitInfo, CommitDiff } from '../../shared/types';
+import { broadcastWebSocketEvent } from '../ws';
 
 const execAsync = util.promisify(exec);
 const router = Router();
+
+// ============================================================================
+// Git Watcher (Polling berkala 3 detik deteksi commit baru -> WebSocket event)
+// ============================================================================
+let activeWatchedProjectPath: string = process.cwd();
+const lastKnownHeadCommits = new Map<string, string>();
+let isCheckingCommits = false;
+
+export function setActiveWatchedProjectPath(targetPath: string) {
+  try {
+    const resolved = path.resolve(targetPath);
+    if (fs.existsSync(resolved)) {
+      activeWatchedProjectPath = resolved;
+      if (!lastKnownHeadCommits.has(resolved)) {
+        execAsync('git rev-parse HEAD', { cwd: resolved })
+          .then(({ stdout }) => {
+            const head = stdout.trim();
+            if (head) lastKnownHeadCommits.set(resolved, head);
+          })
+          .catch(() => {});
+      }
+    }
+  } catch {}
+}
+
+async function checkWatchedCommits() {
+  if (isCheckingCommits) return;
+  isCheckingCommits = true;
+  try {
+    const targetPath = activeWatchedProjectPath;
+    if (!fs.existsSync(targetPath)) return;
+
+    let isGit = false;
+    try {
+      await execAsync('git rev-parse --is-inside-work-tree', { cwd: targetPath });
+      isGit = true;
+    } catch {
+      return;
+    }
+
+    if (!isGit) return;
+
+    let currentHead = '';
+    try {
+      const { stdout: hOut } = await execAsync('git rev-parse HEAD', { cwd: targetPath });
+      currentHead = hOut.trim();
+    } catch {
+      return;
+    }
+
+    if (!currentHead) return;
+
+    // Jika ini pertama kali periksa proyek ini, simpan sebagai baseline tanpa memancarkan event
+    if (!lastKnownHeadCommits.has(targetPath)) {
+      lastKnownHeadCommits.set(targetPath, currentHead);
+      return;
+    }
+
+    const previousHead = lastKnownHeadCommits.get(targetPath);
+    if (previousHead && previousHead !== currentHead) {
+      // Terdeteksi commit baru!
+      lastKnownHeadCommits.set(targetPath, currentHead);
+
+      let hash = currentHead;
+      let shortHash = currentHead.slice(0, 7);
+      let author = 'Developer';
+      let authorEmail = '';
+      let date = new Date().toISOString();
+      let message = 'Update commit';
+
+      try {
+        const { stdout: logOut } = await execAsync(
+          `git log -1 --pretty=format:"%H|%h|%an|%ae|%ad|%s" --date=iso ${currentHead}`,
+          { cwd: targetPath }
+        );
+        const parts = logOut.trim().split('|');
+        if (parts.length >= 6) {
+          hash = parts[0] || hash;
+          shortHash = parts[1] || shortHash;
+          author = parts[2] || author;
+          authorEmail = parts[3] || authorEmail;
+          date = parts[4] || date;
+          message = parts[5] || message;
+        }
+      } catch {}
+
+      let branch = 'main';
+      try {
+        const { stdout: bOut } = await execAsync('git branch --show-current', { cwd: targetPath });
+        branch = bOut.trim() || 'main';
+      } catch {
+        try {
+          const { stdout: refOut } = await execAsync('git rev-parse --abbrev-ref HEAD', { cwd: targetPath });
+          branch = refOut.trim() || 'main';
+        } catch {}
+      }
+
+      let filesChanged = 1;
+      let additions = 0;
+      let deletions = 0;
+      try {
+        const { stdout: statOut } = await execAsync(`git diff --shortstat ${currentHead}^!`, {
+          cwd: targetPath,
+        });
+        const fMatch = statOut.match(/(\d+)\s+file/);
+        const aMatch = statOut.match(/(\d+)\s+insertion/);
+        const dMatch = statOut.match(/(\d+)\s+deletion/);
+        if (fMatch) filesChanged = parseInt(fMatch[1], 10);
+        if (aMatch) additions = parseInt(aMatch[1], 10);
+        if (dMatch) deletions = parseInt(dMatch[1], 10);
+      } catch {}
+
+      const commit = {
+        id: hash,
+        hash,
+        shortHash,
+        message,
+        author,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        date,
+        branch,
+        filesChanged,
+        additions,
+        deletions,
+        type: parseCommitType(message),
+        isGitHubSync: true,
+        source: 'local',
+      };
+
+      console.log(`[Git Watcher] 🚀 Commit baru terdeteksi: ${shortHash} - "${message}" pada ${targetPath}`);
+      broadcastWebSocketEvent('git', 'commit:new', { commit, projectPath: targetPath });
+    }
+  } catch (err: any) {
+    // abaikan kesalahan polling sesaat
+  } finally {
+    isCheckingCommits = false;
+  }
+}
+
+// Jalankan polling setiap 3 detik (3000ms)
+const gitWatcherInterval = setInterval(checkWatchedCommits, 3000);
+if (typeof (gitWatcherInterval as any).unref === 'function') {
+  (gitWatcherInterval as any).unref();
+}
+
+// Inisialisasi awal
+checkWatchedCommits().catch(() => {});
 
 const projectGitConfigsFile = path.join(process.cwd(), 'project_git_configs.json');
 
@@ -55,10 +203,24 @@ function parseCommitType(msg: string): CommitInfo['type'] {
 }
 
 /**
+ * POST /api/git/active-project
+ * Set project path yang sedang aktif dipantau oleh Git Watcher
+ */
+router.post('/active-project', (req: Request, res: Response) => {
+  const { projectPath } = req.body;
+  if (projectPath && typeof projectPath === 'string') {
+    setActiveWatchedProjectPath(projectPath);
+    return res.json({ success: true, activeProjectPath: activeWatchedProjectPath });
+  }
+  return res.status(400).json({ success: false, error: 'projectPath wajib diisi' });
+});
+
+/**
  * GET /api/git/history
  */
 router.get('/history', async (req: Request, res: Response) => {
   const projectPath = (req.query.path as string) || (req.query.projectPath as string) || process.cwd();
+  if (projectPath) setActiveWatchedProjectPath(projectPath);
   const limit = parseInt((req.query.limit as string) || '20', 10);
 
   try {
@@ -125,6 +287,7 @@ router.get('/diff', async (req: Request, res: Response) => {
  */
 router.get('/sync-status', async (req: Request, res: Response) => {
   const projectPath = (req.query.projectPath as string) || (req.query.path as string) || process.cwd();
+  if (projectPath) setActiveWatchedProjectPath(projectPath);
 
   if (!fs.existsSync(projectPath)) {
     return res.status(404).json({

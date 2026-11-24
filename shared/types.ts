@@ -107,6 +107,8 @@ export interface ChatMessage {
   commitHash?: string;
   status?: 'analyzing' | 'thinking' | 'editing' | 'building' | 'done' | 'error';
   statusMessage?: string;
+  type?: 'text' | 'commit';
+  commit?: any;
 }
 
 export interface ChatSession {
@@ -126,7 +128,7 @@ export interface DeploymentInfo {
   createdAt: string;
 }
 
-export type WebSocketChannel = 'logs' | 'errors' | 'chat' | 'system' | 'workspaces' | 'process';
+export type WebSocketChannel = 'logs' | 'errors' | 'chat' | 'system' | 'workspaces' | 'process' | 'git';
 
 export interface WebSocketEvent<T = unknown> {
   channel: WebSocketChannel;

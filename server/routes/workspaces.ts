@@ -536,6 +536,116 @@ function resolveGitCloneAuth(rawUrl: string): { cloneUrl: string; maskedUrl: str
   return { cloneUrl: trimmed, maskedUrl: trimmed, hasToken: false };
 }
 
+/**
+ * GET /api/workspaces/github-repos
+ * Ambil daftar repositori akun GitHub lokal dengan token/credentials
+ */
+router.get('/github-repos', async (req: Request, res: Response) => {
+  try {
+    let token = (req.query.token as string) || (req.headers.authorization?.replace(/^Bearer\s+/i, ''));
+    let username: string | undefined;
+
+    if (!token) {
+      const creds = getGitHubCredentials();
+      token = creds.token;
+      username = creds.user;
+    }
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Kredensial GitHub tidak ditemukan di sistem (~/.git-credentials atau gh auth token)',
+        authenticated: false,
+        repos: [],
+      });
+    }
+
+    // 1. Dapatkan profil user untuk info avatar & username
+    let userProfile = { login: username || '', name: '', avatarUrl: '' };
+    try {
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'ArtaStudio-App',
+        },
+      });
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        userProfile = {
+          login: userData.login || username || '',
+          name: userData.name || userData.login || '',
+          avatarUrl: userData.avatar_url || '',
+        };
+      }
+    } catch (e: any) {
+      console.warn('[GitHub Repos] Gagal mengambil profil user:', e.message);
+    }
+
+    // 2. Fetch repositori user (per_page=100, sort=updated, semua affiliation: owner & collaborator)
+    const reposRes = await fetch(
+      'https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator',
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'ArtaStudio-App',
+        },
+      }
+    );
+
+    if (!reposRes.ok) {
+      const errText = await reposRes.text();
+      return res.status(reposRes.status).json({
+        success: false,
+        error: `GitHub API error (${reposRes.status}): ${errText}`,
+        authenticated: false,
+        repos: [],
+      });
+    }
+
+    const reposData = await reposRes.json();
+    if (!Array.isArray(reposData)) {
+      return res.status(500).json({
+        success: false,
+        error: 'Respons dari GitHub tidak berupa daftar repositori',
+        repos: [],
+      });
+    }
+
+    const repos = reposData.map((repo: any) => ({
+      id: repo.id,
+      name: repo.name,
+      fullName: repo.full_name,
+      private: Boolean(repo.private),
+      cloneUrl: repo.clone_url || `https://github.com/${repo.full_name}.git`,
+      htmlUrl: repo.html_url,
+      description: repo.description || '',
+      updatedAt: repo.updated_at,
+      pushedAt: repo.pushed_at,
+      defaultBranch: repo.default_branch || 'main',
+      language: repo.language || null,
+      stars: repo.stargazers_count || 0,
+      forks: repo.forks_count || 0,
+    }));
+
+    return res.json({
+      success: true,
+      authenticated: true,
+      user: userProfile,
+      count: repos.length,
+      repos,
+    });
+  } catch (err: any) {
+    console.error('[GitHub Repos] Error fetching repos:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Gagal mengambil repositori GitHub',
+      repos: [],
+    });
+  }
+});
+
 router.post('/add', async (req: Request, res: Response) => {
   const { mode, localPath, gitUrl, folderName } = req.body || {};
 
