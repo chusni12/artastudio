@@ -300,8 +300,8 @@ export default function App() {
         const newStatus = chunkData.status || chunkData.message?.status;
         const newActionLogs = chunkData.actionLogs || chunkData.message?.actionLogs;
         if (targetId) {
-          setMessages((prev) =>
-            prev.map((m) =>
+          setMessages((prev) => {
+            const updated = prev.map((m) =>
               m.id === targetId
                 ? {
                     ...m,
@@ -310,8 +310,14 @@ export default function App() {
                     actionLogs: newActionLogs || m.actionLogs,
                   }
                 : m
-            )
-          );
+            );
+            const activeSess =
+              (selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : null) ||
+              (typeof window !== 'undefined' ? localStorage.getItem('artastudio_active_session_id') : null) ||
+              'default';
+            localDB.saveChatSession(activeSess, selectedRepo?.id || 'default', updated).catch(() => {});
+            return updated;
+          });
         }
       } else if (payload.event === 'message:status' || payload.event === 'status') {
         const statusData = payload.data as any;
@@ -320,8 +326,8 @@ export default function App() {
         const statusMsg = statusData.statusMessage || statusData.message;
         const newActionLogs = statusData.actionLogs || statusData.message?.actionLogs;
         if (targetId) {
-          setMessages((prev) =>
-            prev.map((m) =>
+          setMessages((prev) => {
+            const updated = prev.map((m) =>
               m.id === targetId
                 ? {
                     ...m,
@@ -331,8 +337,14 @@ export default function App() {
                     actionLogs: newActionLogs || m.actionLogs,
                   }
                 : m
-            )
-          );
+            );
+            const activeSess =
+              (selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : null) ||
+              (typeof window !== 'undefined' ? localStorage.getItem('artastudio_active_session_id') : null) ||
+              'default';
+            localDB.saveChatSession(activeSess, selectedRepo?.id || 'default', updated).catch(() => {});
+            return updated;
+          });
         }
       } else if (payload.event === 'message:action_log' || payload.event === 'action_log') {
         const logData = payload.data as any;
@@ -340,8 +352,8 @@ export default function App() {
         const newLog = logData.actionLog as AIActionLog | undefined;
         const allLogs = logData.actionLogs as AIActionLog[] | undefined;
         if (targetId) {
-          setMessages((prev) =>
-            prev.map((m) => {
+          setMessages((prev) => {
+            const updated = prev.map((m) => {
               if (m.id !== targetId) return m;
               let updatedLogs = allLogs ? [...allLogs] : [...(m.actionLogs || [])];
               if (!allLogs && newLog) {
@@ -356,8 +368,14 @@ export default function App() {
                 ...m,
                 actionLogs: updatedLogs,
               };
-            })
-          );
+            });
+            const activeSess =
+              (selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : null) ||
+              (typeof window !== 'undefined' ? localStorage.getItem('artastudio_active_session_id') : null) ||
+              'default';
+            localDB.saveChatSession(activeSess, selectedRepo?.id || 'default', updated).catch(() => {});
+            return updated;
+          });
         }
       }
     } else if (channel === 'process') {
@@ -461,9 +479,13 @@ export default function App() {
 
   // Auto-sync chat messages to IndexedDB
   useEffect(() => {
-    if (messages.length > 0 && selectedRepo) {
-      const sessId = `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-      localDB.saveChatSession(sessId, selectedRepo.id, messages).catch(() => {});
+    if (messages.length > 0) {
+      const sessId =
+        (selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : null) ||
+        (typeof window !== 'undefined' ? localStorage.getItem('artastudio_active_session_id') : null) ||
+        'default';
+      const pId = selectedRepo?.id || 'default';
+      localDB.saveChatSession(sessId, pId, messages).catch(() => {});
     }
   }, [messages, selectedRepo]);
 
@@ -496,8 +518,11 @@ export default function App() {
           }).catch(() => {});
         });
         if (repoList.length > 0 && !selectedRepo) {
+          const lastRepoId = typeof window !== 'undefined' ? localStorage.getItem('artastudio_last_repo_id') : null;
           const currentRepo =
-            repoList.find((r) => r.branches.some((b) => b.isCurrent)) || repoList[0];
+            (lastRepoId && repoList.find((r) => r.id === lastRepoId)) ||
+            repoList.find((r) => r.branches.some((b) => b.isCurrent)) ||
+            repoList[0];
           const currentBranch =
             currentRepo.branches.find((b) => b.isCurrent) ||
             currentRepo.branches.find((b) => b.name === 'main') ||
@@ -509,6 +534,8 @@ export default function App() {
           setSelectedBranchPath(initialPath);
           fetchCommits(initialPath);
           updatePreviewUrl(currentRepo, initialPath);
+          const projectSessionId = `ws_${currentRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+          fetchChatHistory(projectSessionId);
         }
       }
     } catch (err) {
@@ -547,15 +574,69 @@ export default function App() {
   };
 
   const fetchChatHistory = async (targetSessionId?: string) => {
+    const lastActiveSessionId =
+      typeof window !== 'undefined' ? localStorage.getItem('artastudio_active_session_id') : null;
+    const lastRepoId =
+      typeof window !== 'undefined' ? localStorage.getItem('artastudio_last_repo_id') : null;
+    const sessId =
+      targetSessionId ||
+      (selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : null) ||
+      lastActiveSessionId ||
+      (lastRepoId ? `ws_${lastRepoId.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default');
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('artastudio_active_session_id', sessId);
+      } catch {}
+    }
+
+    // 1. Instant Local Restore from IndexedDB browser
     try {
-      const sessId = targetSessionId || (selectedRepo ? `ws_${selectedRepo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default');
+      const savedSession = await localDB.getChatSession(sessId);
+      if (savedSession && Array.isArray(savedSession.messages) && savedSession.messages.length > 0) {
+        setMessages(savedSession.messages);
+      }
+    } catch (dbErr) {
+      console.warn('Gagal membaca cache lokal dari IndexedDB:', dbErr);
+    }
+
+    // 2. Background Sync from server
+    try {
       const res = await fetch(`/api/chat/history?sessionId=${encodeURIComponent(sessId)}`);
       const data = await res.json();
-      if (data.success && data.messages) {
-        setMessages(data.messages);
+      if (data.success && Array.isArray(data.messages)) {
+        setMessages((prevMessages) => {
+          // If server only has default welcome message, but local has conversation, keep local and sync to server
+          const isServerOnlyWelcome =
+            data.messages.length === 1 && data.messages[0].id === 'welcome';
+          if (isServerOnlyWelcome && prevMessages.length > 1) {
+            fetch('/api/chat/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: sessId, messages: prevMessages }),
+            }).catch(() => {});
+            return prevMessages;
+          }
+
+          // Merge server messages with local messages
+          const merged = [...prevMessages];
+          for (const sMsg of data.messages) {
+            const idx = merged.findIndex((m) => m.id === sMsg.id);
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...sMsg };
+            } else {
+              merged.push(sMsg);
+            }
+          }
+
+          // Persist merged messages back to IndexedDB
+          const pId = selectedRepo?.id || (lastRepoId || 'default');
+          localDB.saveChatSession(sessId, pId, merged).catch(() => {});
+          return merged;
+        });
       }
     } catch (err) {
-      console.error('Gagal mengambil riwayat chat:', err);
+      console.error('Gagal mengambil riwayat chat dari server:', err);
     }
   };
 
@@ -613,6 +694,11 @@ export default function App() {
 
   const handleSelectWorkspace = async (repo: RepoProject, branchPath?: string) => {
     setSelectedRepo(repo);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('artastudio_last_repo_id', repo.id);
+      } catch {}
+    }
     const targetBranch = branchPath
       ? repo.branches.find((b) => b.path === branchPath)
       : repo.branches.find((b) => b.isCurrent) ||
@@ -627,6 +713,11 @@ export default function App() {
 
     // 1. Isolasi Chat
     const projectSessionId = `ws_${repo.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('artastudio_active_session_id', projectSessionId);
+      } catch {}
+    }
     fetchChatHistory(projectSessionId);
 
     // 2. Isolasi Dev Server & Preview
@@ -695,8 +786,8 @@ export default function App() {
               }
               if (sseData.type === 'done') es.close();
             } else if (sseData.type === 'text_delta') {
-              setMessages((prev) =>
-                prev.map((m) =>
+              setMessages((prev) => {
+                const updated = prev.map((m) =>
                   m.id === sseData.message?.id
                     ? {
                         ...m,
@@ -704,11 +795,13 @@ export default function App() {
                         status: sseData.message?.status,
                       }
                     : m
-                )
-              );
+                );
+                localDB.saveChatSession(sessionId, selectedRepo?.id || 'default', updated).catch(() => {});
+                return updated;
+              });
             } else if (sseData.type === 'status') {
-              setMessages((prev) =>
-                prev.map((m) =>
+              setMessages((prev) => {
+                const updated = prev.map((m) =>
                   m.id === (sseData.assistantMsg?.id || sseData.message?.id)
                     ? {
                         ...m,
@@ -717,13 +810,15 @@ export default function App() {
                         actionLogs: sseData.actionLogs || sseData.assistantMsg?.actionLogs || m.actionLogs,
                       }
                     : m
-                )
-              );
+                );
+                localDB.saveChatSession(sessionId, selectedRepo?.id || 'default', updated).catch(() => {});
+                return updated;
+              });
             } else if (sseData.type === 'action_log') {
               const targetId = sseData.messageId || sseData.id || sseData.message?.id;
               if (targetId) {
-                setMessages((prev) =>
-                  prev.map((m) => {
+                setMessages((prev) => {
+                  const updated = prev.map((m) => {
                     if (m.id !== targetId) return m;
                     let updatedLogs = sseData.actionLogs ? [...sseData.actionLogs] : [...(m.actionLogs || [])];
                     if (!sseData.actionLogs && sseData.actionLog) {
@@ -738,8 +833,10 @@ export default function App() {
                       ...m,
                       actionLogs: updatedLogs,
                     };
-                  })
-                );
+                  });
+                  localDB.saveChatSession(sessionId, selectedRepo?.id || 'default', updated).catch(() => {});
+                  return updated;
+                });
               }
             }
           } catch {}
@@ -780,6 +877,7 @@ export default function App() {
                 m.id === data.assistantMessage.id ? { ...data.assistantMessage, ...m } : m
               );
             }
+            localDB.saveChatSession(sessionId, selectedRepo?.id || 'default', next).catch(() => {});
             return next;
           });
         }

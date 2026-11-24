@@ -12,7 +12,7 @@ import {
   Code,
   Edit3,
 } from 'lucide-react';
-import type { AIActionLog } from '../../../shared/types';
+import type { AIActionLog } from './types';
 
 export interface ActionLogInspectorProps {
   actionLogs?: AIActionLog[];

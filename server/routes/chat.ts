@@ -211,6 +211,18 @@ router.post('/message', handleSendMessage);
 router.post('/send', handleSendMessage);
 
 /**
+ * Sinkronisasi pesan dari IndexedDB / client ke backend in-memory session
+ */
+router.post('/sync', (req: Request, res: Response) => {
+  const { sessionId = 'default', messages = [], projectPath = process.cwd() } = req.body || {};
+  const session = getOrCreateSession(sessionId, projectPath);
+  if (Array.isArray(messages) && messages.length > 0) {
+    session.messages = messages;
+  }
+  res.json({ success: true, count: session.messages.length });
+});
+
+/**
  * Mengambil riwayat percakapan: GET /api/chat/history
  */
 router.get('/history', (req: Request, res: Response) => {

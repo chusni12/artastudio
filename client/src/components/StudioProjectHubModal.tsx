@@ -583,7 +583,9 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
                           <div>
                             <div className="font-bold text-slate-200">Local Docker / Supabase CLI</div>
                             <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                              http://127.0.0.1:54321 · Local Development Instance
+                              {import.meta.env.DEV
+                                ? 'http://127.0.0.1:54321 · Local Development Instance'
+                                : 'Local Development Instance (Supabase CLI)'}
                             </div>
                           </div>
                         </div>

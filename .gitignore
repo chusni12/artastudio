@@ -8,4 +8,5 @@ project_git_configs.json
 
 # Berkas lingkungan (dapat berisi rahasia API) — jangan pernah dipublikasikan
 .env
+.env.local
 
