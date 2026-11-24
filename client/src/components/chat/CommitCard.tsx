@@ -46,6 +46,14 @@ export const CommitCard: React.FC<CommitCardProps> = ({
             {shortHash}
           </span>
 
+          {/* GitHub Sync Badge (Standar Lovable Image 2) */}
+          {(commit.isGitHubSync || commit.source === 'github') && (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold text-emerald-300 bg-emerald-950/70 border border-emerald-500/40 px-2 py-0.5 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.15)] shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>GitHub Sync</span>
+            </span>
+          )}
+
           {/* Branch Tag */}
           {commit.branch && (
             <span className="flex items-center gap-1 font-mono text-[11px] text-slate-400 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-800 shrink-0">

@@ -35,6 +35,9 @@ export interface CommitItem {
   deletions?: number;
   diffSummary?: FileDiff[];
   isCurrentPreview?: boolean;
+  isGitHubSync?: boolean;
+  source?: 'github' | 'local';
+  syncStatus?: string;
 }
 
 export interface SensorErrorItem {

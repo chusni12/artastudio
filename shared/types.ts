@@ -50,6 +50,28 @@ export interface CommitDiff {
   rawDiff: string;
 }
 
+export interface GitSyncStatus {
+  success: boolean;
+  isGit: boolean;
+  connected: boolean;
+  repoName: string;
+  repoUrl: string;
+  cloneUrls: {
+    https: string;
+    ssh: string;
+    cli: string;
+  };
+  currentBranch: string;
+  branches: string[];
+  syncStatus: 'in_sync' | 'behind' | 'ahead' | 'diverged' | 'offline' | 'not_connected' | 'not_git' | 'error';
+  syncMessage: string;
+  localCommit: string;
+  remoteCommit: string | null;
+  ahead: number;
+  behind: number;
+  lastSynced: string;
+}
+
 export interface DetectedError {
   id: string;
   type: 'compile' | 'runtime' | 'unhandled_rejection';

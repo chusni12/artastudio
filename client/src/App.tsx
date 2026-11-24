@@ -1,6 +1,6 @@
 import { localDB } from './services/localDbService';
 import { AddProjectModal } from './components/AddProjectModal';
-import { StudioProjectHubModal } from './components/StudioProjectHubModal';
+import { StudioProjectHubModal, HubTabId } from './components/StudioProjectHubModal';
 import { AIProviderSettingsModal } from './components/AIProviderSettingsModal';
 import { SecurityCheckModal } from './components/SecurityCheckModal';
 import { CommitDiffModal } from './components/chat/CommitDiffModal';
@@ -119,6 +119,7 @@ export default function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [isDeploying, setIsDeploying] = useState<boolean>(false);
   const [isProjectHubOpen, setIsProjectHubOpen] = useState<boolean>(false);
+  const [projectHubInitialTab, setProjectHubInitialTab] = useState<HubTabId>('domains');
   const [isAddProjectOpen, setIsAddProjectOpen] = useState<boolean>(false);
   const [selectedRoutePath, setSelectedRoutePath] = useState<string>('/');
   const [isRouteDropdownOpen, setIsRouteDropdownOpen] = useState<boolean>(false);
@@ -693,7 +694,7 @@ export default function App() {
     }
   };
 
-  // Convert commits to CommitItem for timeline cards
+  // Convert commits to CommitItem for timeline cards (Standar Lovable Image 2)
   const commitItems: CommitItem[] = commits.map((c) => ({
     id: c.hash,
     hash: c.hash,
@@ -705,6 +706,8 @@ export default function App() {
     filesChanged: 2,
     additions: 12,
     deletions: 3,
+    isGitHubSync: true,
+    source: 'github' as const,
   }));
 
   // Filter workspaces for mobile projects list
@@ -926,9 +929,18 @@ export default function App() {
                     ))}
                   </select>
                   {activeBranch?.name && (
-                    <span className="text-[10px] font-mono text-amber-400 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
-                      🌿 {activeBranch.name}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectHubInitialTab('git');
+                        setIsProjectHubOpen(true);
+                      }}
+                      title="Buka Pengaturan Git & GitHub"
+                      className="text-[10px] font-mono text-amber-400 bg-slate-950 hover:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-800 hover:border-amber-500/40 transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <span>🌿</span>
+                      <span>{activeBranch.name}</span>
+                    </button>
                   )}
                 </div>
 
@@ -1683,9 +1695,18 @@ export default function App() {
                     <span className="text-slate-500">Workspace:</span>
                     <span className="font-semibold text-slate-200">{selectedWorkspace?.name || '-'}</span>
                     {activeBranch?.name && (
-                      <span className="text-[11px] font-mono text-amber-400 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800">
-                        🌿 {activeBranch.name}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProjectHubInitialTab('git');
+                          setIsProjectHubOpen(true);
+                        }}
+                        title="Buka Pengaturan Git & GitHub"
+                        className="text-[11px] font-mono text-amber-400 px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <span>🌿</span>
+                        <span>{activeBranch.name}</span>
+                      </button>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
@@ -2096,6 +2117,7 @@ export default function App() {
         securityReport={securityReport}
         onOpenSecurityAudit={handleOpenSecurityAudit}
         logs={logs}
+        initialTab={projectHubInitialTab}
       />
 
       {/* Commit Diff Modal */}

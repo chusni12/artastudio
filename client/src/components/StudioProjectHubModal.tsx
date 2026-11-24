@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { RepoProject, SecurityAuditReport } from '../../../shared/types';
+import type { RepoProject, SecurityAuditReport, GitSyncStatus } from '../../../shared/types';
 import {
   Globe,
   Database,
@@ -12,12 +12,30 @@ import {
   ExternalLink,
   CheckCircle2,
   AlertTriangle,
+  AlertCircle,
   Key,
   Server,
   Activity,
   HardDrive,
   Cpu,
+  GitBranch,
+  GitCommit,
+  Copy,
+  Check,
+  Download,
+  Unlink,
+  ChevronDown,
 } from 'lucide-react';
+
+const GithubIcon: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
+    />
+  </svg>
+);
 
 interface StudioProjectHubModalProps {
   isOpen: boolean;
@@ -27,6 +45,7 @@ interface StudioProjectHubModalProps {
   securityReport: SecurityAuditReport | null;
   onOpenSecurityAudit: () => void;
   logs: string[];
+  initialTab?: HubTabId;
 }
 
 export type HubTabId =
@@ -37,7 +56,8 @@ export type HubTabId =
   | 'security'
   | 'seo'
   | 'usage'
-  | 'settings';
+  | 'settings'
+  | 'git';
 
 interface SeoInspectionResult {
   success: boolean;
@@ -68,12 +88,24 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
   securityReport,
   onOpenSecurityAudit,
   logs,
+  initialTab,
 }) => {
-  const [activeTab, setActiveTab] = useState<HubTabId>('domains');
+  const [activeTab, setActiveTab] = useState<HubTabId>(initialTab || 'domains');
   const [gaId, setGaId] = useState('');
   const [isGaSaved, setIsGaSaved] = useState(false);
   const [customDomainInput, setCustomDomainInput] = useState('');
   const [dnsProvider, setDnsProvider] = useState<'cloudflare' | 'hostinger' | 'custom'>('cloudflare');
+
+  // Git Integration State
+  const [gitStatus, setGitStatus] = useState<GitSyncStatus | null>(null);
+  const [isCheckingGit, setIsCheckingGit] = useState<boolean>(false);
+  const [cloneProtocol, setCloneProtocol] = useState<'https' | 'ssh' | 'cli'>('https');
+  const [isCopiedClone, setIsCopiedClone] = useState<boolean>(false);
+  const [optionsMenuOpen, setOptionsMenuOpen] = useState<boolean>(false);
+  const [isDisconnecting, setIsDisconnecting] = useState<boolean>(false);
+  const [isCheckingOutBranch, setIsCheckingOutBranch] = useState<boolean>(false);
+  const [connectRepoInput, setConnectRepoInput] = useState<string>('');
+  const [isConnectingRepo, setIsConnectingRepo] = useState<boolean>(false);
 
   // Dynamic project detection
   const projectId = (selectedRepo?.id || '').toLowerCase();
@@ -89,6 +121,12 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
   // SEO inspection result state
   const [seoResult, setSeoResult] = useState<SeoInspectionResult | null>(null);
   const [isCheckingSeo, setIsCheckingSeo] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Initialize data dynamically whenever selected project changes
   useEffect(() => {
@@ -123,7 +161,98 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
 
     // Trigger dynamic SEO check from server API
     fetchSeoStatus();
+    // Trigger dynamic Git sync status from server API
+    fetchGitStatus();
   }, [isOpen, selectedRepo?.id, activePath, isArtaLoka, isTahqiq, isArtaStudio]);
+
+  const fetchGitStatus = async () => {
+    setIsCheckingGit(true);
+    try {
+      const target = activePath || process.cwd();
+      const res = await fetch(`/api/git/sync-status?projectPath=${encodeURIComponent(target)}`);
+      if (res.ok) {
+        const data: GitSyncStatus = await res.json();
+        setGitStatus(data);
+      }
+    } catch (err) {
+      console.warn('Gagal memuat status Git:', err);
+    } finally {
+      setIsCheckingGit(false);
+    }
+  };
+
+  const handleRecheckSync = async () => {
+    await fetchGitStatus();
+  };
+
+  const handleDisconnect = async () => {
+    if (!window.confirm('Yakin ingin memutuskan repositori GitHub ini dari proyek?')) return;
+    setIsDisconnecting(true);
+    try {
+      const target = activePath || process.cwd();
+      const res = await fetch('/api/git/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath: target }),
+      });
+      if (res.ok) {
+        await fetchGitStatus();
+      }
+    } catch (err) {
+      console.error('Gagal memutuskan GitHub:', err);
+    } finally {
+      setIsDisconnecting(false);
+      setOptionsMenuOpen(false);
+    }
+  };
+
+  const handleChangeBranch = async (branch: string) => {
+    if (!branch || branch === gitStatus?.currentBranch) return;
+    setIsCheckingOutBranch(true);
+    try {
+      const target = activePath || process.cwd();
+      const res = await fetch('/api/git/checkout-branch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath: target, branch }),
+      });
+      if (res.ok) {
+        await fetchGitStatus();
+      }
+    } catch (err) {
+      console.error('Gagal beralih cabang:', err);
+    } finally {
+      setIsCheckingOutBranch(false);
+      setOptionsMenuOpen(false);
+    }
+  };
+
+  const handleConnectRepo = async () => {
+    if (!connectRepoInput.trim()) return;
+    setIsConnectingRepo(true);
+    try {
+      const target = activePath || process.cwd();
+      const res = await fetch('/api/git/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath: target, repoUrl: connectRepoInput.trim() }),
+      });
+      if (res.ok) {
+        setConnectRepoInput('');
+        await fetchGitStatus();
+      }
+    } catch (err) {
+      console.error('Gagal menghubungkan repositori:', err);
+    } finally {
+      setIsConnectingRepo(false);
+    }
+  };
+
+  const handleCopyClone = (cmd: string) => {
+    navigator.clipboard.writeText(cmd);
+    setIsCopiedClone(true);
+    setTimeout(() => setIsCopiedClone(false), 2000);
+  };
 
   const fetchSeoStatus = async () => {
     setIsCheckingSeo(true);
@@ -298,6 +427,22 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
               >
                 <span>⚙️</span>
                 <span>Pengaturan & Secrets</span>
+              </button>
+
+              {/* Sub-menu Git di bawah Pengaturan (Standar Lovable Image 3) */}
+              <button
+                onClick={() => setActiveTab('git')}
+                className={`w-full text-left px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2.5 cursor-pointer ${
+                  activeTab === 'git'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                }`}
+              >
+                <GithubIcon className="w-4 h-4 shrink-0" />
+                <span className="flex-1">Git</span>
+                {gitStatus?.connected && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                )}
               </button>
             </div>
           </div>
@@ -1042,6 +1187,32 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
                     </div>
                   </div>
 
+                  {/* GitHub Git Integration Card in Settings */}
+                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/50 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-200">
+                        <GithubIcon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-200 block text-xs">
+                          Integrasi GitHub & Git
+                        </span>
+                        <p className="text-slate-400 text-[11px]">
+                          {gitStatus?.connected
+                            ? `Terhubung ke ${gitStatus.repoName || projectName} (${gitStatus.currentBranch || 'main'})`
+                            : 'Belum terhubung ke repositori GitHub'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('git')}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors cursor-pointer"
+                    >
+                      Buka Pengaturan Git ↗
+                    </button>
+                  </div>
+
                   {/* AI Memory Box */}
                   <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/50">
                     <span className="font-semibold text-slate-200 block mb-1">🧠 AI Memory & Custom Instructions</span>
@@ -1049,6 +1220,331 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
                       Aturan arsitektur bawaan di <span className="font-mono text-amber-400">AGENTS.md</span> selalu diutamakan AI saat memodifikasi kode {projectName}.
                     </p>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* 9. GIT & GITHUB INTEGRATION TAB (Standar Lovable Image 3 & 4) */}
+            {activeTab === 'git' && (
+              <div className="space-y-4 max-w-2xl animate-in fade-in">
+                {/* Header Section */}
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                    <span>Integrasi GitHub & Kontrol Git</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                      {projectName}
+                    </span>
+                    {gitStatus?.currentBranch && (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
+                        <GitBranch className="w-3 h-3 text-violet-400" />
+                        {gitStatus.currentBranch}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-slate-400 text-[11px] mt-0.5">
+                    Sinkronisasi dua arah dengan akun atau organisasi GitHub Anda, kelola cabang, dan unduh basis kode proyek.
+                  </p>
+                </div>
+
+                {/* 1. GitHub Integration Card (Image 3 & 4) */}
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 space-y-4 shadow-sm">
+                  {/* Card Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-100 shadow-inner">
+                        <GithubIcon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-slate-100">GitHub</span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                            2-Way Sync
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Sinkronisasi dua arah dengan akun atau organisasi GitHub Anda
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Connection Badge & Action Menu */}
+                    <div className="flex items-center gap-2 relative">
+                      {gitStatus?.connected ? (
+                        <>
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            Connected
+                          </span>
+
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setOptionsMenuOpen(!optionsMenuOpen)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer"
+                              title="Opsi Repositori"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+
+                            {optionsMenuOpen && (
+                              <div className="absolute right-0 mt-1 w-48 rounded-xl bg-[#080d16] border border-slate-800 shadow-2xl z-30 py-1 text-xs">
+                                {gitStatus.repoUrl && (
+                                  <a
+                                    href={gitStatus.repoUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={() => setOptionsMenuOpen(false)}
+                                    className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/80 transition-colors"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                                    <span>Buka di GitHub ↗</span>
+                                  </a>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleRecheckSync}
+                                  className="w-full text-left flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/80 transition-colors cursor-pointer"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>Periksa Ulang (Re-check)</span>
+                                </button>
+                                <div className="border-t border-slate-800/80 my-1"></div>
+                                <button
+                                  type="button"
+                                  onClick={handleDisconnect}
+                                  disabled={isDisconnecting}
+                                  className="w-full text-left flex items-center gap-2 px-3 py-2 text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                >
+                                  <Unlink className="w-3.5 h-3.5" />
+                                  <span>{isDisconnecting ? 'Memutuskan...' : 'Putuskan / Disconnect'}</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                          <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                          Disconnected
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Card Content */}
+                  {gitStatus?.connected ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      {/* Repository Name & External Link */}
+                      <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800">
+                        <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-1">
+                          Repository
+                        </span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-xs font-semibold text-slate-200 truncate" title={gitStatus.repoName}>
+                            {gitStatus.repoName || projectName}
+                          </span>
+                          {gitStatus.repoUrl && (
+                            <a
+                              href={gitStatus.repoUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-amber-400 hover:text-amber-300 p-1 hover:bg-slate-800 rounded transition-colors shrink-0"
+                              title="Buka Repositori di GitHub"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Branch Selector Dropdown */}
+                      <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] uppercase font-semibold text-slate-400 block">
+                            Cabang Aktif (Branch)
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {gitStatus.branches?.length || 1} cabang
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <GitBranch className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                          <select
+                            value={gitStatus.currentBranch || 'main'}
+                            onChange={(e) => handleChangeBranch(e.target.value)}
+                            disabled={isCheckingOutBranch}
+                            className="flex-1 bg-transparent font-mono text-xs text-slate-200 border-none outline-none cursor-pointer focus:ring-0 truncate"
+                          >
+                            {gitStatus.branches?.map((b) => (
+                              <option key={b} value={b} className="bg-slate-900 text-slate-200">
+                                {b} {b === gitStatus.currentBranch ? '(aktif)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {isCheckingOutBranch && (
+                            <RefreshCw className="w-3 h-3 text-amber-400 animate-spin shrink-0" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-lg bg-slate-950/60 border border-dashed border-slate-800 space-y-2">
+                      <span className="text-xs text-slate-300 block font-medium">
+                        Tautkan repositori GitHub untuk mengaktifkan sinkronisasi 2-arah:
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="https://github.com/username/repository.git"
+                          value={connectRepoInput}
+                          onChange={(e) => setConnectRepoInput(e.target.value)}
+                          className="flex-1 bg-slate-900 border border-slate-800 rounded-lg p-2 font-mono text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleConnectRepo}
+                          disabled={isConnectingRepo || !connectRepoInput.trim()}
+                          className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs transition-all cursor-pointer"
+                        >
+                          {isConnectingRepo ? 'Menghubungkan...' : 'Hubungkan'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Status Sinkronisasi Card (Image 3 & 4) */}
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      gitStatus?.syncStatus === 'in_sync'
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                        : gitStatus?.syncStatus === 'behind'
+                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                        : gitStatus?.syncStatus === 'ahead'
+                        ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30'
+                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    }`}>
+                      {gitStatus?.syncStatus === 'in_sync' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4" />
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-100">
+                          {gitStatus?.syncMessage || 'In sync with GitHub'}
+                        </span>
+                        {gitStatus?.localCommit && (
+                          <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-amber-300 border border-slate-700">
+                            {gitStatus.localCommit}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Terakhir disinkronkan: {gitStatus?.lastSynced || 'Baru saja'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleRecheckSync}
+                      disabled={isCheckingGit}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700/80 transition-all active:scale-95 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isCheckingGit ? 'animate-spin text-amber-400' : 'text-slate-400'}`} />
+                      <span>{isCheckingGit ? 'Memeriksa...' : 'Re-check'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3. Clone Repository Section (Image 3 & 4) */}
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 space-y-3 shadow-sm">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-200">Klon Repositori (Clone)</h4>
+                    <p className="text-[11px] text-slate-400">
+                      Gunakan perintah berikut untuk mengklon repositori ke komputer lokal Anda.
+                    </p>
+                  </div>
+
+                  {/* Protocol Selector Tabs */}
+                  <div className="flex items-center gap-1 border-b border-slate-800 pb-1">
+                    {(['https', 'ssh', 'cli'] as const).map((proto) => (
+                      <button
+                        key={proto}
+                        type="button"
+                        onClick={() => setCloneProtocol(proto)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                          cloneProtocol === proto
+                            ? 'bg-slate-800 text-amber-400 font-bold border border-slate-700'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {proto === 'https' ? 'HTTPS' : proto === 'ssh' ? 'SSH' : 'GitHub CLI'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Snippet box with copy button */}
+                  {(() => {
+                    const repoSlug =
+                      gitStatus?.repoName ||
+                      (isArtaLoka ? 'chusni12/artaloka-2514cb7b' : `chusni12/${projectName.toLowerCase().replace(/\s+/g, '-')}`);
+                    const cloneCommand =
+                      cloneProtocol === 'https'
+                        ? (gitStatus?.cloneUrls?.https || `https://github.com/${repoSlug}.git`)
+                        : cloneProtocol === 'ssh'
+                        ? (gitStatus?.cloneUrls?.ssh || `git@github.com:${repoSlug}.git`)
+                        : (gitStatus?.cloneUrls?.cli || `gh repo clone ${repoSlug}`);
+
+                    return (
+                      <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-950 font-mono text-xs border border-slate-800">
+                        <span className="text-slate-300 flex-1 select-all overflow-x-auto no-scrollbar whitespace-nowrap">
+                          {cloneProtocol === 'cli' ? cloneCommand : `git clone ${cloneCommand}`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyClone(cloneProtocol === 'cli' ? cloneCommand : `git clone ${cloneCommand}`)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium transition-colors cursor-pointer shrink-0"
+                        >
+                          {isCopiedClone ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span className="text-emerald-400 font-semibold">Disalin!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3 text-slate-400" />
+                              <span>Salin</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 4. Unduh Basis Kode (ZIP - Image 4) */}
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-200">Unduh Basis Kode</h4>
+                    <p className="text-[11px] text-slate-400">
+                      Unduh arsip ZIP lengkap dari proyek ini (tanpa folder node_modules dan riwayat .git).
+                    </p>
+                  </div>
+
+                  <a
+                    href={`/api/git/download-zip?projectPath=${encodeURIComponent(activePath || process.cwd())}`}
+                    download={`${projectName.toLowerCase().replace(/\s+/g, '-')}.zip`}
+                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow-md active:scale-95 cursor-pointer shrink-0"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh basis kode (ZIP)</span>
+                  </a>
                 </div>
               </div>
             )}

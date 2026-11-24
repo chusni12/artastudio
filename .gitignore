@@ -4,6 +4,7 @@ dist
 *.log
 projects.json
 removed_projects.json
+project_git_configs.json
 
 # Berkas lingkungan (dapat berisi rahasia API) — jangan pernah dipublikasikan
 .env
