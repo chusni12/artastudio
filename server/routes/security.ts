@@ -308,7 +308,89 @@ async function auditApiSecrets(targetDir: string): Promise<SecurityPillarResult>
     // Git command failed or not a git repo
   }
 
-  if (findings.length === 0) {
+  // ==============================================================================
+  // PEMERIKSAAN KREDENSIAL PRODUKSI VS DOMAIN TARGET (USER REQUEST CRITICAL GATE)
+  // ==============================================================================
+  // 1. Cek Localhost Leak di file .env.local atau bundle build
+  const envFiles = ['.env', '.env.local', '.env.production', '.env.development'];
+  for (const envF of envFiles) {
+    const envPath = path.join(targetDir, envF);
+    if (fs.existsSync(envPath)) {
+      try {
+        const envContent = fs.readFileSync(envPath, 'utf-8');
+        // Deteksi jika variabel Supabase URL mengarah ke localhost/127.0.0.1
+        if (/VITE_SUPABASE_URL\s*=\s*https?:\/\/(?:127\.0\.0\.1|localhost)/i.test(envContent)) {
+          if (envF !== '.env.development') {
+            findings.push({
+              id: `prod-mismatch-supabase-localhost-${envF}`,
+              category: 'api-secrets',
+              level: 'critical',
+              title: `Konfigurasi Supabase Mengarah ke Localhost (${envF})`,
+              detail: `Berkas ${envF} menyetel VITE_SUPABASE_URL ke 127.0.0.1 / localhost. Jika dideploy ke publik, seluruh user gagal login!`,
+              file: envF,
+              remediation: 'Ubah VITE_SUPABASE_URL ke instance Supabase Cloud produksi resmi (misal: https://<project>.supabase.co).',
+            });
+            status = 'failed';
+            score = Math.min(score, 30);
+          }
+        }
+
+        // 2. Deteksi Midtrans / Stripe masih Sandbox di file produksi
+        if (envF === '.env.production' || envF === '.env') {
+          if (/MIDTRANS_SERVER_KEY\s*=\s*SB-Mid-server-/i.test(envContent)) {
+            findings.push({
+              id: 'prod-mismatch-midtrans-sandbox',
+              category: 'api-secrets',
+              level: 'warning',
+              title: 'Kredensial Midtrans Masih Mode Sandbox di Lingkungan Produksi',
+              detail: 'MIDTRANS_SERVER_KEY terdeteksi menggunakan prefix SB-Mid-server- (Sandbox/Testing). Pembayaran uang asli tidak akan diproses.',
+              file: envF,
+              remediation: 'Ganti dengan Midtrans Production Server Key resmi dari dashboard Midtrans Anda saat siap menerima transaksi nyata.',
+            });
+            if (status !== 'failed') status = 'warning';
+            score = Math.min(score, 80);
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 3. Inspeksi Bundle Produksi (.output atau dist) terhadap kebocoran localhost 54321
+  const outputCheckDirs = [
+    path.join(targetDir, '.output', 'server'),
+    path.join(targetDir, 'dist'),
+  ];
+  for (const outDir of outputCheckDirs) {
+    if (fs.existsSync(outDir)) {
+      try {
+        const outFiles = fs.readdirSync(outDir, { recursive: true }) as string[];
+        for (const outF of outFiles) {
+          if (typeof outF === 'string' && (outF.endsWith('.js') || outF.endsWith('.mjs'))) {
+            const fullOut = path.join(outDir, outF);
+            try {
+              const outContent = fs.readFileSync(fullOut, 'utf-8');
+              if (outContent.includes('http://127.0.0.1:54321')) {
+                findings.push({
+                  id: 'prod-bundle-leak-54321',
+                  category: 'api-secrets',
+                  level: 'critical',
+                  title: 'Bocoran Port 54321 Terdeteksi di Bundle Kompilasi Produksi',
+                  detail: `Berkas bundle ${path.relative(targetDir, fullOut)} memuat hardcoded http://127.0.0.1:54321. Pengunjung publik akan mengalami error koneksi auth!`,
+                  file: path.relative(targetDir, fullOut),
+                  remediation: 'Pastikan .env.production mengunci URL Supabase Cloud resmi dan rebuild proyek dengan npm run build.',
+                });
+                status = 'failed';
+                score = Math.min(score, 25);
+                break;
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+  }
+
+    if (findings.length === 0) {
     findings.push({
       id: 'secret-clean',
       category: 'api-secrets',
