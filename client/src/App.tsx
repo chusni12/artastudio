@@ -953,9 +953,19 @@ export default function App() {
   const handleOpenSecurityAudit = async () => {
     const targetPath = selectedBranchPath || selectedRepo?.defaultPath || process.cwd();
     setIsSecurityModalOpen(true);
+    setSecurityReport(null);
     setIsLoadingSecurity(true);
     try {
-      const res = await fetch(`/api/security/audit?projectPath=${encodeURIComponent(targetPath)}`);
+      const res = await fetch(
+        `/api/security/audit?projectPath=${encodeURIComponent(targetPath)}&_t=${Date.now()}`,
+        {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
+          },
+        }
+      );
       const data = await res.json();
       if (data.success && data.report) {
         setSecurityReport(data.report);
@@ -2368,6 +2378,7 @@ export default function App() {
         onClose={() => setIsSecurityModalOpen(false)}
         report={securityReport}
         isLoading={isLoadingSecurity}
+        onRefresh={handleOpenSecurityAudit}
         onConfirmDeploy={async () => {
           setIsSecurityModalOpen(false);
           await handleTriggerDeploy();

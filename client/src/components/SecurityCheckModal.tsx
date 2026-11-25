@@ -9,6 +9,7 @@ interface SecurityCheckModalProps {
   onConfirmDeploy: () => void;
   isDeploying: boolean;
   onSendToChat?: (prompt: string) => void;
+  onRefresh?: () => void;
 }
 
 export const SecurityCheckModal: React.FC<SecurityCheckModalProps> = ({
@@ -19,6 +20,7 @@ export const SecurityCheckModal: React.FC<SecurityCheckModalProps> = ({
   onConfirmDeploy,
   isDeploying,
   onSendToChat,
+  onRefresh,
 }) => {
   const [selectedPillarId, setSelectedPillarId] = useState<string>('all');
   const [selectedFinding, setSelectedFinding] = useState<SecurityFinding | null>(null);
@@ -85,12 +87,25 @@ export const SecurityCheckModal: React.FC<SecurityCheckModalProps> = ({
               <p className="text-[11px] text-slate-400">Inspeksi otomatis RLS database, API keys, dependensi CVE, dan integritas build</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                disabled={isLoading}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200 transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                title="Pindai ulang langsung dari disk tanpa cache"
+              >
+                <span className={isLoading ? 'animate-spin inline-block' : ''}>↻</span>
+                <span>{isLoading ? 'Memindai...' : 'Periksa Ulang'}</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Top Summary Banner */}

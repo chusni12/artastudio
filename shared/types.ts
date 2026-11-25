@@ -287,6 +287,18 @@ export interface SecurityAuditSummary {
   criticals: number;
 }
 
+export interface SecurityGitSyncInfo {
+  isGit: boolean;
+  branch?: string;
+  localCommit?: string;
+  remoteCommit?: string | null;
+  syncStatus: 'in_sync' | 'behind' | 'ahead' | 'diverged' | 'offline' | 'not_connected' | 'not_git';
+  ahead: number;
+  behind: number;
+  hasUncommittedChanges: boolean;
+  checkedAt: string;
+}
+
 export interface SecurityAuditReport {
   timestamp: string;
   projectPath: string;
@@ -295,4 +307,5 @@ export interface SecurityAuditReport {
   canDeploy: boolean;
   pillars: SecurityPillarResult[];
   summary: SecurityAuditSummary;
+  gitSync?: SecurityGitSyncInfo;
 }
