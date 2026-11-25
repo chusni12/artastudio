@@ -1,11 +1,13 @@
 import { localDB } from './services/localDbService';
 import { AddProjectModal } from './components/AddProjectModal';
 import { StudioProjectHubModal, HubTabId } from './components/StudioProjectHubModal';
+import { IndexedDbPersistenceTestModal } from './components/IndexedDbPersistenceTestModal';
 import { AIProviderSettingsModal } from './components/AIProviderSettingsModal';
 import { SecurityCheckModal } from './components/SecurityCheckModal';
 import { CommitDiffModal } from './components/chat/CommitDiffModal';
 import { CommitCard } from './components/chat/CommitCard';
 import { ActionLogInspector } from './components/chat/ActionLogInspector';
+import { UpdateNotificationToast, type UpdateInfo } from './components/UpdateNotificationToast';
 import type { CommitItem } from './components/chat/types';
 import type { SecurityAuditReport } from '../../shared/types';
 import React, { useState, useEffect, useRef } from 'react';
@@ -122,6 +124,7 @@ export default function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [isDeploying, setIsDeploying] = useState<boolean>(false);
   const [isProjectHubOpen, setIsProjectHubOpen] = useState<boolean>(false);
+  const [isIndexedDbTestOpen, setIsIndexedDbTestOpen] = useState<boolean>(false);
   const [projectHubInitialTab, setProjectHubInitialTab] = useState<HubTabId>('domains');
   const [isAddProjectOpen, setIsAddProjectOpen] = useState<boolean>(false);
   const [selectedRoutePath, setSelectedRoutePath] = useState<string>('/');
@@ -180,6 +183,8 @@ export default function App() {
     author?: string;
     commit?: CommitItem;
   } | null>(null);
+  const [appUpdateInfo, setAppUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [dismissedUpdateHash, setDismissedUpdateHash] = useState<string | null>(null);
 
   // Auto-dismiss git toast after 7s
   useEffect(() => {
@@ -190,6 +195,36 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [gitToast]);
+
+  // Periodic In-App Auto-Updater Poller (check-update)
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkSystemUpdate = async () => {
+      try {
+        const res = await fetch('/api/system/check-update');
+        if (!res.ok) return;
+        const data: UpdateInfo = await res.json();
+        if (cancelled) return;
+        if (data?.hasUpdate) {
+          setAppUpdateInfo(data);
+        } else {
+          setAppUpdateInfo(null);
+        }
+      } catch {
+        // Ignore network errors during background update check
+      }
+    };
+
+    const initialTimer = setTimeout(checkSystemUpdate, 1500);
+    const intervalId = setInterval(checkSystemUpdate, 45000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(initialTimer);
+      clearInterval(intervalId);
+    };
+  }, []);
 
   // Sync active project path to backend Git Watcher
   useEffect(() => {
@@ -396,6 +431,13 @@ export default function App() {
         setIsDeploying(false);
         setDeployNotification(`Edge deployment sukses: ${(payload.data as any)?.url || ''}`);
         setTimeout(() => setDeployNotification(null), 6000);
+      } else if (payload.event === 'update:available') {
+        const updateData = payload.data as UpdateInfo;
+        if (updateData?.hasUpdate) {
+          setAppUpdateInfo(updateData);
+        }
+      } else if (payload.event === 'update:progress') {
+        window.dispatchEvent(new CustomEvent('artastudio:system:update_progress', { detail: payload.data }));
       }
     } else if (channel === 'workspaces') {
       if (payload.event === 'clone:progress') {
@@ -2354,6 +2396,13 @@ export default function App() {
         onOpenSecurityAudit={handleOpenSecurityAudit}
         logs={logs}
         initialTab={projectHubInitialTab}
+        onOpenIndexedDbTest={() => setIsIndexedDbTestOpen(true)}
+      />
+
+      {/* Tes Persistensi IndexedDB Modal */}
+      <IndexedDbPersistenceTestModal
+        isOpen={isIndexedDbTestOpen}
+        onClose={() => setIsIndexedDbTestOpen(false)}
       />
 
       {/* Commit Diff Modal */}
@@ -2414,6 +2463,22 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Floating In-App Live Update Notifier & 1-Click Auto-Updater (Pojok Kanan Atas) */}
+      <UpdateNotificationToast
+        updateInfo={
+          appUpdateInfo?.hasUpdate &&
+          (appUpdateInfo.remoteHash || appUpdateInfo.latestCommit?.hash || 'update') !== dismissedUpdateHash
+            ? appUpdateInfo
+            : null
+        }
+        onDismiss={() =>
+          setDismissedUpdateHash(
+            appUpdateInfo?.remoteHash || appUpdateInfo?.latestCommit?.hash || 'update'
+          )
+        }
+        onUpdateApplied={() => setDismissedUpdateHash(null)}
+      />
     </div>
   );
 }

@@ -91,6 +91,8 @@ Buka `http://localhost:4000` di browser Android Anda, buka menu **`⚙️ Lainny
    - Menghubungkan Google Analytics (GA4), Cloud Storage (Supabase/R2/Docker), Domain & Edge DNS, SEO & AI search review, serta pengelolaan Secrets.
 7. **One-Click Deploy ke Cloudflare Edge:**
    - Tombol publikasi instan ke Cloudflare Workers dengan streaming log terminal live.
+8. **Tes Persistensi IndexedDB:**
+   - Tool verifikasi apakah data di sesi ini tetap tersimpan di IndexedDB setelah koneksi dibuka ulang (simulasi reload).
 
 ---
 

@@ -9,6 +9,7 @@ import sensorRouter from './routes/sensor';
 import deployRouter from './routes/deploy';
 import chatRouter from './routes/chat';
 import securityRouter from './routes/security';
+import systemRouter, { startSystemUpdateChecker } from './routes/system';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
@@ -30,6 +31,7 @@ app.use('/api/sensor', sensorRouter);
 app.use('/api/deploy', deployRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/security', securityRouter);
+app.use('/api/system', systemRouter);
 
 // Healthcheck endpoint
 app.get('/api/health', (req: Request, res: Response) => {
@@ -68,13 +70,14 @@ if (fs.existsSync(clientDistPath)) {
     res.json({
       name: 'ArtaStudio Server',
       description: 'AI Web Development Suite Core API (Frontend client/dist not built yet)',
-      endpoints: ['/api/workspaces', '/api/git', '/api/process', '/api/sensor', '/api/deploy', '/api/chat', '/api/health']
+      endpoints: ['/api/workspaces', '/api/git', '/api/process', '/api/sensor', '/api/deploy', '/api/chat', '/api/system', '/api/health']
     });
   });
 }
 
 // Start listening
 if (process.env.NODE_ENV !== 'test') {
+  startSystemUpdateChecker(45000);
   server.listen(PORT, () => {
     console.log(`[ArtaStudio] Server listening on http://localhost:${PORT}`);
     console.log(`[ArtaStudio] WebSocket server ready on ws://localhost:${PORT}`);

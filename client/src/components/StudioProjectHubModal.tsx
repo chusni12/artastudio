@@ -46,6 +46,7 @@ interface StudioProjectHubModalProps {
   onOpenSecurityAudit: () => void;
   logs: string[];
   initialTab?: HubTabId;
+  onOpenIndexedDbTest?: () => void;
 }
 
 export type HubTabId =
@@ -89,6 +90,7 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
   onOpenSecurityAudit,
   logs,
   initialTab,
+  onOpenIndexedDbTest,
 }) => {
   const [activeTab, setActiveTab] = useState<HubTabId>(initialTab || 'domains');
   const [gaId, setGaId] = useState('');
@@ -1221,6 +1223,31 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
                     <p className="text-slate-400 text-[11px]">
                       Aturan arsitektur bawaan di <span className="font-mono text-amber-400">AGENTS.md</span> selalu diutamakan AI saat memodifikasi kode {projectName}.
                     </p>
+                  </div>
+
+                  {/* Tes Persistensi IndexedDB */}
+                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/50 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-200 shrink-0">
+                        <Database className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-200 block text-xs">
+                          Tes Persistensi IndexedDB
+                        </span>
+                        <p className="text-slate-400 text-[11px]">
+                          Menguji apakah data di sesi ini tetap tersimpan di IndexedDB setelah koneksi dibuka ulang.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onOpenIndexedDbTest}
+                      disabled={!onOpenIndexedDbTest}
+                      className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      Jalankan Tes
+                    </button>
                   </div>
                 </div>
               </div>
