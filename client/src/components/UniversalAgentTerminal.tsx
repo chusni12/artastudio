@@ -81,8 +81,8 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
           action: 'init',
           sessionId: sessionId.current,
           projectPath,
-          cols: term.cols,
-          rows: term.rows,
+          cols: Math.max(term.cols || 80, 80),
+          rows: Math.max(term.rows || 24, 24),
           // Start pure interactive shell
           command: undefined,
         })
@@ -127,8 +127,8 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
               channel: 'terminal',
               action: 'resize',
               sessionId: sessionId.current,
-              cols: term.cols,
-              rows: term.rows,
+              cols: Math.max(term.cols || 80, 80),
+              rows: Math.max(term.rows || 24, 24),
             })
           );
         }

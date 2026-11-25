@@ -31,7 +31,7 @@ export class TerminalManager {
     // Spawn TRUE PTY BASH/CMD INTERAKTIF
     const ptyProcess = ptyModule.spawn(shell, isWindows ? [] : ['-l'], {
       name: 'xterm-256color',
-      cols: Math.max(cols || 100, 40),
+      cols: Math.max(cols || 80, 80),
       rows: Math.max(rows || 30, 15),
       cwd,
       env: {
@@ -93,7 +93,7 @@ export class TerminalManager {
     const session = this.sessions.get(id);
     if (session && cols > 0 && rows > 0) {
       try {
-        session.ptyProcess.resize(cols, rows);
+        session.ptyProcess.resize(Math.max(cols, 80), Math.max(rows, 24));
       } catch {}
     }
   }
