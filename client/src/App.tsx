@@ -1991,31 +1991,7 @@ export default function App() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    {/* Switcher: Terminal Agent vs Chat Klasik */}
-                    <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-md border border-slate-800 text-[10px]">
-                      <button
-                        type="button"
-                        onClick={() => setMiddlePanelMode('terminal')}
-                        className={`px-2 py-0.5 rounded font-bold transition-all ${
-                          middlePanelMode === 'terminal'
-                            ? 'bg-amber-500 text-slate-950 shadow-sm'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        💻 Terminal Agent
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMiddlePanelMode('chat')}
-                        className={`px-2 py-0.5 rounded font-bold transition-all ${
-                          middlePanelMode === 'chat'
-                            ? 'bg-amber-500 text-slate-950 shadow-sm'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        💬 Chat Klasik
-                      </button>
-                    </div>
+
 
                     <button
                       onClick={() => setIsChatOpen(false)}

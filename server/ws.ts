@@ -40,16 +40,28 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
       try {
         const payload = JSON.parse(rawMessage.toString());
         
-        // 1. Terminal Channel Messages
+        // 1. True PTY Terminal Channel Messages
         if (payload.channel === 'terminal') {
           if (payload.action === 'init') {
             const sessId = payload.sessionId || `term_${Date.now()}`;
             extWs.terminalSessionId = sessId;
-            terminalManager.createSession(sessId, payload.projectPath, extWs, payload.command);
-          } else if (payload.action === 'input' && payload.data) {
+            terminalManager.createSession(
+              sessId,
+              payload.projectPath,
+              extWs,
+              payload.cols || 80,
+              payload.rows || 24,
+              payload.command
+            );
+          } else if (payload.action === 'input' && payload.data !== undefined) {
             const sessId = extWs.terminalSessionId || payload.sessionId;
             if (sessId) {
               terminalManager.write(sessId, payload.data);
+            }
+          } else if (payload.action === 'resize' && payload.cols && payload.rows) {
+            const sessId = extWs.terminalSessionId || payload.sessionId;
+            if (sessId) {
+              terminalManager.resize(sessId, payload.cols, payload.rows);
             }
           } else if (payload.action === 'kill') {
             const sessId = extWs.terminalSessionId || payload.sessionId;
