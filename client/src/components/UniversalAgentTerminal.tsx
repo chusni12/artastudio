@@ -10,19 +10,26 @@ interface UniversalAgentTerminalProps {
   wsConnected: boolean;
 }
 
+interface TerminalInstance {
+  term: Terminal;
+  fitAddon: FitAddon;
+  element: HTMLDivElement;
+}
+
 export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
   projectPath,
   projectName,
 }) => {
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermInstance = useRef<Terminal | null>(null);
-  const fitAddonInstance = useRef<FitAddon | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   // Active Role Tab: 'thinker' (Pemikir) | 'worker_1' | 'worker_2' ...
   const [activeRoleId, setActiveRoleId] = useState<string>('thinker');
   // List of spawned worker IDs
   const [workers, setWorkers] = useState<number[]>([1]);
+
+  // Map of client-side terminal instances per session: sessionId -> { term, fitAddon, element }
+  const terminalInstances = useRef<Map<string, TerminalInstance>>(new Map());
 
   // Max workers limit from settings (1 - 32, default 5)
   const maxWorkers = (() => {
@@ -40,12 +47,92 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
   const currentSessionIdRef = useRef<string>(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
 
-  // Inisialisasi xterm & PTY WebSocket Connection
+  // Setup WebSocket connection (Persisten tunggal untuk terminal)
   useEffect(() => {
-    if (!terminalRef.current) return;
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.hostname}:4000`;
+    const socket = new WebSocket(wsUrl);
+    wsRef.current = socket;
 
-    // Bersihkan terminal DOM lama jika ada
-    terminalRef.current.innerHTML = '';
+    socket.onopen = () => {
+      // Inisialisasi sesi aktif saat ini
+      initSessionOnServer(currentSessionIdRef.current);
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.channel === 'terminal') {
+          const targetSessId = payload.sessionId || currentSessionIdRef.current;
+          const inst = terminalInstances.current.get(targetSessId);
+
+          if (payload.event === 'output' && payload.data) {
+            if (inst) {
+              inst.term.write(payload.data);
+            }
+            // Tanggapi CPR query jika terminal client membutuhkannya
+            if (payload.data.includes('\x1b[6n') && socket.readyState === WebSocket.OPEN) {
+              socket.send(
+                JSON.stringify({
+                  channel: 'terminal',
+                  action: 'input',
+                  sessionId: targetSessId,
+                  data: '\x1b[1;1R',
+                })
+              );
+            }
+          } else if (payload.event === 'exit') {
+            if (inst) {
+              inst.term.write(`\r\n\x1b[90m[Proses shell keluar dengan kode: ${payload.code}]\x1b[0m\r\n`);
+            }
+          }
+        }
+      } catch {
+        // Fallback write to active term
+        const activeInst = terminalInstances.current.get(currentSessionIdRef.current);
+        if (activeInst) {
+          activeInst.term.write(event.data);
+        }
+      }
+    };
+
+    // Listener custom event untuk menerima prompt dari modal (Perbaiki Otomatis / Fix Semua)
+    const handleCustomTerminalInput = (e: Event) => {
+      const customEvent = e as CustomEvent<{ text: string }>;
+      if (customEvent.detail && customEvent.detail.text) {
+        const textToSend = customEvent.detail.text;
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(
+            JSON.stringify({
+              channel: 'terminal',
+              action: 'input',
+              sessionId: currentSessionIdRef.current,
+              data: `${textToSend}\r`,
+            })
+          );
+          const activeInst = terminalInstances.current.get(currentSessionIdRef.current);
+          activeInst?.term.focus();
+        }
+      }
+    };
+
+    window.addEventListener('artastudio:terminal:input', handleCustomTerminalInput);
+
+    return () => {
+      window.removeEventListener('artastudio:terminal:input', handleCustomTerminalInput);
+      socket.close();
+    };
+  }, []);
+
+  // Helper untuk membuat atau mengambil instance xterm terisolasi per sesi
+  const getOrCreateTerminal = (sessId: string, pPath: string): TerminalInstance => {
+    const existing = terminalInstances.current.get(sessId);
+    if (existing) return existing;
+
+    const termDiv = document.createElement('div');
+    termDiv.className = 'w-full h-full';
+    termDiv.style.display = 'none'; // Sembunyikan jika tidak aktif
+    containerRef.current?.appendChild(termDiv);
 
     const term = new Terminal({
       cursorBlink: true,
@@ -75,169 +162,107 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(terminalRef.current);
-    term.focus();
-
-    const doFit = () => {
-      try {
-        fitAddon.fit();
-        if (socket && socket.readyState === WebSocket.OPEN && term.cols && term.rows) {
-          socket.send(
-            JSON.stringify({
-              channel: 'terminal',
-              action: 'resize',
-              sessionId: currentSessionIdRef.current,
-              cols: Math.max(term.cols, 80),
-              rows: Math.max(term.rows, 24),
-            })
-          );
-        }
-      } catch {}
-    };
-
-    setTimeout(doFit, 50);
-    setTimeout(doFit, 200);
-
-    xtermInstance.current = term;
-    fitAddonInstance.current = fitAddon;
-
-    // Connect Real PTY WebSocket
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.hostname}:4000`;
-    const socket = new WebSocket(wsUrl);
-    wsRef.current = socket;
-
-    socket.onopen = () => {
-      // Inisialisasi sesi PTY di Backend
-      socket.send(
-        JSON.stringify({
-          channel: 'terminal',
-          action: 'init',
-          sessionId: currentSessionIdRef.current,
-          projectPath,
-          cols: Math.max(term.cols || 80, 80),
-          rows: Math.max(term.rows || 24, 24),
-        })
-      );
-      setTimeout(doFit, 100);
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.channel === 'terminal') {
-          if (payload.event === 'output' && payload.data) {
-            term.write(payload.data);
-            // Tanggapi CPR query jika terminal client membutuhkannya
-            if (payload.data.includes('\x1b[6n') && socket.readyState === WebSocket.OPEN) {
-              socket.send(
-                JSON.stringify({
-                  channel: 'terminal',
-                  action: 'input',
-                  sessionId: currentSessionIdRef.current,
-                  data: '\x1b[1;1R',
-                })
-              );
-            }
-          } else if (payload.event === 'exit') {
-            term.write(`\r\n\x1b[90m[Proses shell keluar dengan kode: ${payload.code}]\x1b[0m\r\n`);
-          }
-        }
-      } catch {
-        term.write(event.data);
-      }
-    };
+    term.open(termDiv);
 
     // Keyboard Input dari Browser ➔ Kirim ke PTY Backend
-    const onDataDisposable = term.onData((data) => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(
+    term.onData((data) => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
           JSON.stringify({
             channel: 'terminal',
             action: 'input',
-            sessionId: currentSessionIdRef.current,
+            sessionId: sessId,
             data,
           })
         );
       }
     });
 
-    // Listener custom event untuk menerima prompt dari modal (Perbaiki Otomatis / Fix Semua)
-    const handleCustomTerminalInput = (e: Event) => {
-      const customEvent = e as CustomEvent<{ text: string }>;
-      if (customEvent.detail && customEvent.detail.text) {
-        const textToSend = customEvent.detail.text;
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(
-            JSON.stringify({
-              channel: 'terminal',
-              action: 'input',
-              sessionId: currentSessionIdRef.current,
-              data: `${textToSend}\r`,
-            })
-          );
-          term.focus();
-        }
-      }
-    };
+    const instance: TerminalInstance = { term, fitAddon, element: termDiv };
+    terminalInstances.current.set(sessId, instance);
 
-    window.addEventListener('artastudio:terminal:input', handleCustomTerminalInput);
+    initSessionOnServer(sessId, pPath);
 
-    const handleResize = () => {
-      try {
-        fitAddon.fit();
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(
-            JSON.stringify({
-              channel: 'terminal',
-              action: 'resize',
-              sessionId: currentSessionIdRef.current,
-              cols: Math.max(term.cols || 80, 80),
-              rows: Math.max(term.rows || 24, 24),
-            })
-          );
-        }
-      } catch {}
-    };
+    return instance;
+  };
 
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      onDataDisposable.dispose();
-      window.removeEventListener('artastudio:terminal:input', handleCustomTerminalInput);
-      window.removeEventListener('resize', handleResize);
-      socket.close();
-      term.dispose();
-    };
-  }, [projectPath]);
-
-  // Efek ketika berganti Tab Role (Pemikir ⟷ Worker)
-  useEffect(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !xtermInstance.current) {
-      return;
-    }
-
-    // Reset buffer layar xterm sebelum memuat buffer sesi yang baru
-    xtermInstance.current.reset();
-
-    // Kirim init untuk attach ke sesi target (atau spawn jika belum ada)
+  // Helper untuk mengirim inisialisasi sesi ke backend
+  const initSessionOnServer = (sessId: string, pPath?: string) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const inst = terminalInstances.current.get(sessId);
     wsRef.current.send(
       JSON.stringify({
         channel: 'terminal',
         action: 'init',
-        sessionId: currentSessionId,
-        projectPath,
-        cols: Math.max(xtermInstance.current.cols || 80, 80),
-        rows: Math.max(xtermInstance.current.rows || 24, 24),
+        sessionId: sessId,
+        projectPath: pPath || projectPath,
+        cols: inst?.term.cols || 100,
+        rows: inst?.term.rows || 30,
       })
     );
+  };
 
-    try {
-      fitAddonInstance.current?.fit();
-    } catch {}
+  // Efek ketika berganti Tab Role atau berganti Proyek
+  useEffect(() => {
+    if (!containerRef.current) return;
 
-    xtermInstance.current.focus();
-  }, [activeRoleId, currentSessionId, projectPath]);
+    // Pastikan instance untuk sesi ini sudah ada
+    const currentInst = getOrCreateTerminal(currentSessionId, projectPath);
+
+    // Tampilkan elemen terminal aktif, dan sembunyikan semua terminal sesi lain
+    terminalInstances.current.forEach((inst, sId) => {
+      if (sId === currentSessionId) {
+        inst.element.style.display = 'block';
+        setTimeout(() => {
+          try {
+            inst.fitAddon.fit();
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.send(
+                JSON.stringify({
+                  channel: 'terminal',
+                  action: 'resize',
+                  sessionId: sId,
+                  cols: inst.term.cols,
+                  rows: inst.term.rows,
+                })
+              );
+            }
+          } catch {}
+          inst.term.focus();
+        }, 50);
+      } else {
+        inst.element.style.display = 'none';
+      }
+    });
+  }, [currentSessionId, projectPath]);
+
+  // Pasang ResizeObserver pada container agar begitu ukuran berubah langsung fit presisi
+  useEffect(() => {
+    if (!containerRef.current || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      const activeInst = terminalInstances.current.get(currentSessionIdRef.current);
+      if (activeInst && activeInst.element.style.display !== 'none') {
+        try {
+          activeInst.fitAddon.fit();
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({
+                channel: 'terminal',
+                action: 'resize',
+                sessionId: currentSessionIdRef.current,
+                cols: activeInst.term.cols,
+                rows: activeInst.term.rows,
+              })
+            );
+          }
+        } catch {}
+      }
+    });
+
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   // Handler: Tambah Worker Baru
   const handleAddWorker = () => {
@@ -262,6 +287,13 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
       );
     }
 
+    const inst = terminalInstances.current.get(targetSession);
+    if (inst) {
+      inst.term.dispose();
+      inst.element.remove();
+      terminalInstances.current.delete(targetSession);
+    }
+
     setWorkers((prev) => prev.filter((id) => id !== wId));
     if (activeRoleId === `worker_${wId}`) {
       setActiveRoleId('thinker');
@@ -279,7 +311,7 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
         data: `\x03\r\n${cmd}\r\n`,
       })
     );
-    xtermInstance.current?.focus();
+    terminalInstances.current.get(currentSessionId)?.term.focus();
   };
 
   // Helper keyboard touch mobile
@@ -293,12 +325,12 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
         data: keyData,
       })
     );
-    xtermInstance.current?.focus();
+    terminalInstances.current.get(currentSessionId)?.term.focus();
   };
 
   return (
     <div
-      onClick={() => xtermInstance.current?.focus()}
+      onClick={() => terminalInstances.current.get(currentSessionId)?.term.focus()}
       className="flex-1 flex flex-col bg-[#0a0f19] h-full overflow-hidden select-text cursor-text"
     >
       {/* Orca Dual-Role Tab Header: [✓ Pemikir] & [• Worker 1..32] */}
@@ -419,12 +451,12 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
         </div>
       </div>
 
-      {/* Terminal Viewport Container */}
+      {/* Terminal Viewport Multi-Container (Setiap tab punya instance DOM sendiri yang di-show/hide) */}
       <div
         className="flex-1 w-full h-full p-2 bg-[#0a0f19] overflow-hidden outline-none cursor-text relative flex flex-col"
-        ref={terminalRef}
+        ref={containerRef}
         tabIndex={0}
-        onClick={() => xtermInstance.current?.focus()}
+        onClick={() => terminalInstances.current.get(currentSessionId)?.term.focus()}
         style={{ minHeight: '380px' }}
       />
 

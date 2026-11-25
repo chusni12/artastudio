@@ -54,17 +54,17 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
               payload.command
             );
           } else if (payload.action === 'input' && payload.data !== undefined) {
-            const sessId = extWs.terminalSessionId || payload.sessionId;
+            const sessId = payload.sessionId || extWs.terminalSessionId;
             if (sessId) {
               terminalManager.write(sessId, payload.data);
             }
           } else if (payload.action === 'resize' && payload.cols && payload.rows) {
-            const sessId = extWs.terminalSessionId || payload.sessionId;
+            const sessId = payload.sessionId || extWs.terminalSessionId;
             if (sessId) {
               terminalManager.resize(sessId, payload.cols, payload.rows);
             }
           } else if (payload.action === 'kill') {
-            const sessId = extWs.terminalSessionId || payload.sessionId;
+            const sessId = payload.sessionId || extWs.terminalSessionId;
             if (sessId) {
               terminalManager.killSession(sessId);
             }

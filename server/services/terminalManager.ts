@@ -36,15 +36,11 @@ export class TerminalManager {
         } catch {}
       }
 
-      // Replay output buffer terakhir agar tampilan di browser langsung pulih utuh
-      if (existing.bufferHistory.length > 0 && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            channel: 'terminal',
-            event: 'output',
-            data: existing.bufferHistory.join(''),
-          })
-        );
+      // Kirim trigger window resize / SIGWINCH agar TUI redraw dengan ukuran layar yang benar tanpa merusak input
+      if (cols > 0 && rows > 0) {
+        try {
+          existing.ptyProcess.resize(cols, rows);
+        } catch {}
       }
       return existing;
     }
@@ -121,13 +117,13 @@ export class TerminalManager {
       session.lastActive = Date.now();
 
       if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send(JSON.stringify({ channel: 'terminal', event: 'output', data }));
+        session.ws.send(JSON.stringify({ channel: 'terminal', event: 'output', sessionId: id, data }));
       }
     });
 
     ptyProcess.onExit(({ exitCode }) => {
       if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send(JSON.stringify({ channel: 'terminal', event: 'exit', code: exitCode }));
+        session.ws.send(JSON.stringify({ channel: 'terminal', event: 'exit', sessionId: id, code: exitCode }));
       }
       this.sessions.delete(id);
     });
