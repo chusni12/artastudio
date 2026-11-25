@@ -1219,7 +1219,7 @@ export default function App() {
                 <button
                   onClick={() => setMobileView('preview')}
                   className="p-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-400 hover:text-white active:scale-95 transition-all"
-                  title="Tutup Chat & Kembali ke Preview"
+                  title="Tutup Terminal & Kembali ke Preview"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1265,177 +1265,17 @@ export default function App() {
                 </button>
               </header>
 
-              {/* Active Sensor Errors */}
-              {activeErrors.length > 0 && (
-                <div className="p-2.5 bg-red-950/50 border-b border-red-800/60 flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-2 text-xs text-red-300">
-                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                    <span>{activeErrors.length} Error Terdeteksi</span>
-                  </div>
-                  <button
-                    onClick={() => handleTriggerAutoFix(activeErrors[0].id)}
-                    disabled={isAutoFixing}
-                    className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white font-semibold text-[11px] shadow disabled:opacity-50"
-                  >
-                    {isAutoFixing ? 'Memperbaiki...' : 'Perbaiki Otomatis'}
-                  </button>
-                </div>
-              )}
-
-              {/* Chat Feed */}
-              <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                {messages.map((m) =>
-                  m.type === 'commit' || (m as any).commit ? (
-                    <div key={m.id} className="w-full my-1">
-                      <CommitCard
-                        commit={
-                          (m as any).commit || {
-                            id: m.id,
-                            hash: m.commitHash || m.id,
-                            shortHash: (m.commitHash || m.id).slice(0, 7),
-                            message: m.text,
-                            author: 'Developer',
-                            timestamp: new Date(m.timestamp).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            }),
-                            branch: activeBranch?.name || 'main',
-                            filesChanged: 1,
-                            additions: 0,
-                            deletions: 0,
-                            isGitHubSync: true,
-                            source: 'github',
-                          }
-                        }
-                        onViewDetail={(commit) => {
-                          setSelectedCommitDiff(commit);
-                          setIsCommitDiffOpen(true);
-                        }}
-                        onPreview={() => {
-                          setMobileView('preview');
-                        }}
-                        isCurrentPreview={false}
-                      />
-                    </div>
-                  ) : (
-                    <div
-                      key={m.id}
-                      className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1 px-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          {m.sender === 'user' ? 'Anda' : 'ArtaStudio AI'}
-                        </span>
-                        <span className="text-[10px] text-slate-600">
-                          {new Date(m.timestamp).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
-                      </div>
-                      <div
-                        className={`max-w-[88%] rounded-2xl p-3 text-xs leading-relaxed ${
-                          m.sender === 'user'
-                            ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-xs shadow-md shadow-amber-500/10'
-                            : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-xs shadow-md'
-                        }`}
-                      >
-                        {m.text ? (
-                          <p className="whitespace-pre-wrap">{m.text}</p>
-                        ) : m.sender === 'assistant' && m.status !== 'done' ? (
-                          <p className="text-slate-400 italic text-[11px] animate-pulse">
-                            Sedang memproses instruksi Anda...
-                          </p>
-                        ) : null}
-                        {/* Collapsible Action Log & Tool Execution Inspector (Ala Orca / Lovable) */}
-                        {m.sender === 'assistant' && (
-                          <ActionLogInspector
-                            actionLogs={m.actionLogs}
-                            status={m.status}
-                            statusMessage={(m as any).statusMessage}
-                            isLatestAssistant={m.id === latestAssistantMsgId}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  )
-                )}
-
-                {/* Timeline Commit Cards (Standar Lovable Image 2) */}
-                {commitItems.slice(0, 1).map((item) => (
-                  <CommitCard
-                    key={item.id}
-                    commit={item}
-                    onViewDetail={(commit) => {
-                      setSelectedCommitDiff(commit);
-                      setIsCommitDiffOpen(true);
-                    }}
-                    onPreview={() => {
-                      setMobileView('preview');
-                    }}
-                    isCurrentPreview={false}
-                  />
-                ))}
-
-                <div ref={chatScrollRef} />
-              </div>
-
-              {/* Quick Chips & Chat Input Form */}
-              <div className="shrink-0 border-t border-slate-800 bg-[#0a0e17]/95">
-                {/* Quick Chips / Saran Cepat */}
-                <div className="flex items-center gap-1.5 overflow-x-auto py-2 px-3 no-scrollbar">
-                  {quickChips.map((chip, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => setInputPrompt(chip)}
-                      className="shrink-0 text-[11px] font-medium px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-amber-500/50 hover:bg-slate-800 active:scale-95 transition-all shadow-sm"
-                    >
-                      {chip}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Input Form */}
-                <form onSubmit={handleSendMessage} className="p-2.5 pt-0">
-                  <div className="relative flex items-center bg-slate-900 border border-slate-700/80 rounded-2xl px-3 py-1 focus-within:border-amber-500 transition-colors shadow-inner">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setInputPrompt((prev) => (prev ? prev + ' ' : '') + 'Tolong optimalkan tampilan ini');
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-amber-400 transition-colors"
-                      title="Bantuan Suara / Cepat"
-                    >
-                      <Mic className="w-4 h-4" />
-                    </button>
-                    <textarea
-                      value={inputPrompt}
-                      onChange={(e) => setInputPrompt(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSendMessage();
-                        }
-                      }}
-                      placeholder="Tanyakan atau instruksikan perubahan kode..."
-                      rows={1}
-                      className="flex-1 bg-transparent text-xs text-slate-100 placeholder-slate-500 px-2 py-2 focus:outline-none resize-none max-h-24 font-sans"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputPrompt.trim() || isSendingPrompt}
-                      className="p-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 disabled:opacity-30 disabled:hover:bg-amber-500 transition-all font-bold"
-                    >
-                      <Send className="w-4 h-4" />
-                    </button>
-                  </div>
-                </form>
+              {/* Pure Native Terminal Swarm for Mobile Screen */}
+              <div className="flex-1 w-full h-full overflow-hidden flex flex-col bg-[#0a0f19]">
+                <UniversalAgentTerminal
+                  projectPath={selectedBranchPath || selectedRepo?.defaultPath || ''}
+                  projectName={selectedRepo?.name || 'Workspace'}
+                  wsConnected={wsConnected}
+                />
               </div>
             </div>
           )}
 
-          {/* 3. MOBILE VIEW: PROJECTS HUB (Layar Daftar Proyek 1:1 Lovable Image 4) */}
           {mobileView === 'projects' && (
             <div className="h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17]">
               {/* Top Section: Header & Search/Filter */}
