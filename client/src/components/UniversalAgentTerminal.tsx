@@ -330,9 +330,29 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     terminalInstances.current.get(currentSessionId)?.term.focus();
   };
 
+  // State untuk input teks mobile langsung
+  const [mobileInputText, setMobileInputText] = useState('');
+
+  const handleMobileSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!mobileInputText) {
+      sendKey('\r');
+      return;
+    }
+    sendKey(mobileInputText + '\r');
+    setMobileInputText('');
+  };
+
   return (
     <div
-      onClick={() => terminalInstances.current.get(currentSessionId)?.term.focus()}
+      onClick={() => {
+        const inst = terminalInstances.current.get(currentSessionId);
+        if (inst) {
+          inst.term.focus();
+          const hiddenTextarea = inst.element.querySelector('textarea');
+          if (hiddenTextarea) hiddenTextarea.focus();
+        }
+      }}
       className="flex-1 flex flex-col bg-[#0a0f19] h-full overflow-hidden select-text cursor-text"
     >
       {/* Orca Dual-Role Tab Header: [✓ Pemikir] & [• Worker 1..32] */}
@@ -462,51 +482,93 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
         style={{ minHeight: '200px' }}
       />
 
-      {/* Mobile & Android Virtual Keyboard Quick Bar */}
-      <div className="h-7 border-t border-slate-800/80 bg-slate-900/90 px-2 flex items-center gap-1.5 overflow-x-auto text-[10px] font-mono shrink-0 select-none">
-        <span className="text-slate-500 text-[9px] mr-0.5 shrink-0">Mobile Key:</span>
-        <button
-          type="button"
-          onClick={() => sendKey('\x1b')}
-          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
-        >
-          Esc
-        </button>
-        <button
-          type="button"
-          onClick={() => sendKey('\t')}
-          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
-        >
-          Tab
-        </button>
-        <button
-          type="button"
-          onClick={() => sendKey('\x03')}
-          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold active:scale-95"
-        >
-          Ctrl+C
-        </button>
-        <button
-          type="button"
-          onClick={() => sendKey('\x1b[A')}
-          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          onClick={() => sendKey('\x1b[B')}
-          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
-        >
-          ↓
-        </button>
-        <button
-          type="button"
-          onClick={() => sendKey('\r')}
-          className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold active:scale-95 ml-auto"
-        >
-          Enter ↵
-        </button>
+      {/* Mobile & Android Virtual Keyboard Quick Bar & Direct Input Box */}
+      <div className="border-t border-slate-800/80 bg-slate-900/95 flex flex-col shrink-0 select-none">
+        {/* Input Text Form khusus Mobile Touch (Memastikan keyboard HP 100% muncul & bisa ngetik) */}
+        <form onSubmit={handleMobileSubmit} className="p-1.5 flex items-center gap-1.5 border-b border-slate-800/60">
+          <input
+            type="text"
+            value={mobileInputText}
+            onChange={(e) => setMobileInputText(e.target.value)}
+            placeholder="Ketik perintah / pesan disini..."
+            className="flex-1 bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-amber-500 shadow-inner"
+          />
+          <button
+            type="submit"
+            className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow active:scale-95 flex items-center gap-1 shrink-0"
+          >
+            <span>Kirim</span>
+            <span>↵</span>
+          </button>
+        </form>
+
+        {/* Quick Functional Keys */}
+        <div className="h-7 px-2 flex items-center gap-1.5 overflow-x-auto text-[10px] font-mono">
+          <button
+            type="button"
+            onClick={() => {
+              const inst = terminalInstances.current.get(currentSessionId);
+              if (inst) {
+                inst.term.focus();
+                const ta = inst.element.querySelector('textarea');
+                if (ta) ta.focus();
+              }
+            }}
+            className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 active:scale-95 shrink-0 font-sans font-bold"
+          >
+            ⌨️ Keyboard Layar
+          </button>
+          <div className="w-px h-3.5 bg-slate-700 mx-0.5 shrink-0" />
+          <button
+            type="button"
+            onClick={() => sendKey('\x1b')}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+          >
+            Esc
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('\t')}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+          >
+            Tab
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('\x03')}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold active:scale-95 shrink-0"
+          >
+            Ctrl+C
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('\x1b[A')}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('\x1b[B')}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('\x1b[D')}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('\x1b[C')}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+          >
+            →
+          </button>
+        </div>
       </div>
     </div>
   );
