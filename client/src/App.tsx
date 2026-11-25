@@ -1047,7 +1047,7 @@ export default function App() {
       {isMobileScreen ? (
         <div className="h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17]">
           {/* 1. MOBILE VIEW: PREVIEW (Layar Preview Penuh 1:1 Lovable) */}
-          {mobileView === 'preview' && (
+          <div className={`h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17] ${mobileView === 'preview' ? 'flex' : 'hidden'}`}>
             <div className="h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17]">
               {/* Minimalist Top Header */}
               <header className="h-12 border-b border-slate-800/80 bg-[#0c121e]/95 backdrop-blur-md px-3 flex items-center justify-between shrink-0 z-20">
@@ -1209,10 +1209,10 @@ export default function App() {
                 </button>
               </div>
             </div>
-          )}
+          </div>
 
           {/* 2. MOBILE VIEW: CHAT AI (Layar Chat Penuh 1:1 Lovable Image 2) */}
-          {mobileView === 'chat' && (
+          <div className={`h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17] ${mobileView === 'chat' ? 'flex' : 'hidden'}`}>
             <div className="h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17]">
               {/* Header: Tombol ✕, Dropdown Proyek di tengah, Tombol > di kanan */}
               <header className="h-12 border-b border-slate-800/80 bg-[#0c121e]/95 backdrop-blur-md px-3 flex items-center justify-between shrink-0 z-20">
@@ -1274,9 +1274,9 @@ export default function App() {
                 />
               </div>
             </div>
-          )}
+          </div>
 
-          {mobileView === 'projects' && (
+          <div className={`h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17] ${mobileView === 'projects' ? 'flex' : 'hidden'}`}>
             <div className="h-full w-full flex flex-col relative overflow-hidden bg-[#0b0f17]">
               {/* Top Section: Header & Search/Filter */}
               <div className="px-4 pt-4 pb-2 shrink-0">
@@ -1488,7 +1488,7 @@ export default function App() {
                 </button>
               </div>
             </div>
-          )}
+          </div>
         </div>
       ) : (
         /* ========================================================

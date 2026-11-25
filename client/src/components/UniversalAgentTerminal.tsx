@@ -129,6 +129,8 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     const existing = terminalInstances.current.get(sessId);
     if (existing) return existing;
 
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+
     const termDiv = document.createElement('div');
     termDiv.className = 'w-full h-full';
     termDiv.style.display = 'none'; // Sembunyikan jika tidak aktif
@@ -137,8 +139,8 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'block',
-      fontSize: 12,
-      lineHeight: 1.2,
+      fontSize: isMobile ? 10 : 12,
+      lineHeight: 1.15,
       fontFamily: '"JetBrains Mono", Menlo, Monaco, Consolas, monospace',
       allowProposedApi: true,
       convertEol: true,
@@ -453,11 +455,11 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
 
       {/* Terminal Viewport Multi-Container (Setiap tab punya instance DOM sendiri yang di-show/hide) */}
       <div
-        className="flex-1 w-full h-full p-2 bg-[#0a0f19] overflow-hidden outline-none cursor-text relative flex flex-col"
+        className="flex-1 w-full h-full p-1 sm:p-2 bg-[#0a0f19] overflow-hidden outline-none cursor-text relative flex flex-col"
         ref={containerRef}
         tabIndex={0}
         onClick={() => terminalInstances.current.get(currentSessionId)?.term.focus()}
-        style={{ minHeight: '380px' }}
+        style={{ minHeight: '200px' }}
       />
 
       {/* Mobile & Android Virtual Keyboard Quick Bar */}
