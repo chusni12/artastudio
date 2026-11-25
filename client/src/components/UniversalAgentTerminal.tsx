@@ -173,73 +173,34 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
       onClick={() => xtermInstance.current?.focus()}
       className="flex-1 flex flex-col bg-[#0a0f19] h-full overflow-hidden select-text cursor-text"
     >
-      {/* Terminal Top Agent Selector Toolbar */}
-      <div className="h-9 border-b border-slate-800/80 bg-slate-900/90 px-3 flex items-center justify-between text-xs shrink-0 select-none">
-        <div className="flex items-center gap-1.5 overflow-x-auto">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSwitchAgent('opencode');
-            }}
-            className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'opencode'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`}
-          >
-            <span>⚡ OpenCode</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSwitchAgent('agy');
-            }}
-            className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'agy'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`}
-          >
-            <span>🚀 Agy CLI</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSwitchAgent('claude');
-            }}
-            className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'claude'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`}
-          >
-            <span>✨ Claude / Custom</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSwitchAgent('bash');
-            }}
-            className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'bash'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-            }`}
-          >
-            <span>💻 Terminal Bash/CMD</span>
-          </button>
+      {/* Pure Native Terminal Console Header */}
+      <div className="h-8 border-b border-slate-800/80 bg-slate-900/90 px-3 flex items-center justify-between text-xs shrink-0 select-none">
+        <div className="flex items-center gap-2 text-slate-300 font-mono text-[11px]">
+          <span className="text-amber-400 font-bold">💻</span>
+          <span className="font-semibold text-slate-200">Terminal Shell</span>
+          <span className="text-slate-600">|</span>
+          <span className="text-slate-400 truncate max-w-xs">{projectPath}</span>
         </div>
 
-        <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="hidden sm:inline">{projectName}</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ channel: 'terminal', action: 'input', sessionId: sessionId.current, data: '\x03\r\nclear\r\n' }));
+              }
+              xtermInstance.current?.focus();
+            }}
+            className="px-2 py-0.5 rounded text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono transition-colors"
+            title="Bersihkan Layar Terminal"
+          >
+            Clear (Ctrl+L)
+          </button>
+          <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>TTY Online</span>
+          </div>
         </div>
       </div>
 
