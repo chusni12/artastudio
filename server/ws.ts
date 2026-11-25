@@ -86,9 +86,7 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
     });
 
     extWs.on('close', () => {
-      if (extWs.terminalSessionId) {
-        terminalManager.killSession(extWs.terminalSessionId);
-      }
+      terminalManager.detachWs(extWs);
     });
 
     extWs.on('error', (err) => {
@@ -101,9 +99,7 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
     wss.clients.forEach((ws) => {
       const extWs = ws as ExtendedWebSocket;
       if (!extWs.isAlive) {
-        if (extWs.terminalSessionId) {
-          terminalManager.killSession(extWs.terminalSessionId);
-        }
+        terminalManager.detachWs(extWs);
         return extWs.terminate();
       }
       extWs.isAlive = false;

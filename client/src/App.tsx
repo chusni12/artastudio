@@ -15,6 +15,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Folder,
   LayoutGrid,
   MessageSquare,
@@ -943,7 +945,12 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success && data.prompt) {
-        setInputPrompt(data.prompt);
+        setIsChatOpen(true);
+        window.dispatchEvent(
+          new CustomEvent('artastudio:terminal:input', {
+            detail: { text: data.prompt },
+          })
+        );
       }
     } catch (err) {
       console.error('Gagal memicu auto-fix:', err);
@@ -1764,7 +1771,7 @@ export default function App() {
 {/* Clean Workspace Header Bar (No overlapping absolute button) */}
 
             {/* Left Column: Workspace & Git Timeline */}
-            {isSidebarOpen && (
+            {isSidebarOpen ? (
               <aside className="w-72 border-r border-slate-800/80 bg-[#0c121e]/90 flex flex-col shrink-0">
                 <div className="p-3 border-b border-slate-800/60 flex items-center justify-between">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
@@ -1786,14 +1793,7 @@ export default function App() {
                     title="Tutup / Minimize Sidebar"
                     className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800 transition-colors"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
-                      />
-                    </svg>
+                    <ChevronsLeft className="w-4 h-4" />
                   </button>
                 </div>
 
@@ -1962,17 +1962,59 @@ export default function App() {
                   </div>
                 </div>
               </aside>
+            ) : (
+              /* Collapsed Slim Sidebar Strip with Animated Hover Arrow & Count */
+              <aside
+                onClick={() => setIsSidebarOpen(true)}
+                className="w-12 border-r border-slate-800/80 bg-[#0c121e]/95 flex flex-col items-center py-3 shrink-0 cursor-pointer group hover:bg-slate-900/80 transition-all select-none relative z-10"
+                title="Klik untuk membuka daftar Proyek / Workspace"
+              >
+                {/* Top Arrow Toggle: Slides right on hover */}
+                <div className="w-8 h-8 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-center text-slate-400 group-hover:text-amber-400 group-hover:border-amber-500/50 shadow-sm transition-all mb-2">
+                  <ChevronsRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1.5 text-amber-400" />
+                </div>
+
+                {/* Workspace Count Badge */}
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-amber-400 font-bold mb-4 shadow-inner" title={`${workspaces.length} Proyek Terpasang`}>
+                  {workspaces.length}
+                </span>
+
+                {/* Vertical Text: WORKSPACE */}
+                <div className="my-auto flex flex-col items-center">
+                  <span className="[writing-mode:vertical-lr] text-[10.5px] uppercase font-black tracking-widest text-slate-400 group-hover:text-amber-300 transition-colors drop-shadow">
+                    WORKSPACE
+                  </span>
+                </div>
+
+                {/* Bottom Folder Icon */}
+                <div className="w-7 h-7 rounded-lg bg-slate-900/60 flex items-center justify-center text-slate-500 group-hover:text-amber-400 transition-colors mt-2">
+                  <Folder className="w-3.5 h-3.5" />
+                </div>
+              </aside>
             )}
 
-            {/* Center Column: Chat & AI Workspace */}
+            {/* Center Column: Pure Terminal Debian Workspace */}
             {isChatOpen ? (
               <section
                 style={{ width: `${chatWidthPercent}%` }}
                 className="flex flex-col bg-[#0d1424]/50 border-r border-slate-800/80 relative shrink-0 transition-all duration-75"
               >
                 {/* Active Workspace Bar */}
-                <div className="h-10 border-b border-slate-800/60 px-4 flex items-center justify-between bg-slate-900/30 text-xs text-slate-400">
-                  <div className="flex items-center gap-2">
+                <div className="h-10 border-b border-slate-800/60 px-3 flex items-center justify-between bg-slate-900/30 text-xs text-slate-400">
+                  <div className="flex items-center gap-1.5">
+                    {/* Toggle Collapse Sidebar Button (<< / >>) */}
+                    <button
+                      type="button"
+                      onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition-colors mr-1"
+                      title={isSidebarOpen ? "Minimize Proyek (<<)" : "Buka Proyek (>>)"}
+                    >
+                      {isSidebarOpen ? (
+                        <ChevronsLeft className="w-4 h-4 text-slate-400 hover:text-amber-400" />
+                      ) : (
+                        <ChevronsRight className="w-4 h-4 text-amber-400" />
+                      )}
+                    </button>
                     <span className="text-slate-500">Workspace:</span>
                     <span className="font-semibold text-slate-200">{selectedWorkspace?.name || '-'}</span>
                     {activeBranch?.name && (
@@ -1991,11 +2033,9 @@ export default function App() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-
-
                     <button
                       onClick={() => setIsChatOpen(false)}
-                      title="Minimize / Sembunyikan Panel (Preview Layar Penuh)"
+                      title="Minimize / Sembunyikan Panel Terminal (Preview Layar Penuh)"
                       className="px-2 py-0.5 rounded text-[11px] border border-slate-800 bg-slate-900 hover:border-slate-700 text-slate-400 hover:text-slate-200 flex items-center gap-1"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2006,158 +2046,17 @@ export default function App() {
                           d="M19 9l-7 7-7-7"
                         />
                       </svg>
-                      <span>Sembunyikan Chat</span>
+                      <span>Sembunyikan Terminal</span>
                     </button>
                   </div>
                 </div>
 
-                {middlePanelMode === 'terminal' ? (
-                  <UniversalAgentTerminal
-                    projectPath={selectedBranchPath || selectedRepo?.defaultPath || ""}
-                    projectName={selectedRepo?.name || 'Workspace'}
-                    wsConnected={wsConnected}
-                    onSendToChat={(prompt) => setInputPrompt(prompt)}
-                  />
-                ) : (
-                  <>
-                {/* Error Sensor Banner */}
-                {activeErrors.length > 0 && (
-                  <div className="p-3 bg-red-950/40 border-b border-red-800/50 flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs text-red-300">
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                      <span>{activeErrors.length} Temuan Kritis Terdeteksi di Kode/Runtime</span>
-                    </div>
-                    <button
-                      onClick={() => handleTriggerAutoFix(activeErrors[0].id)}
-                      disabled={isAutoFixing}
-                      className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-semibold text-xs shadow disabled:opacity-50"
-                    >
-                      {isAutoFixing ? 'Memperbaiki...' : 'Perbaiki Otomatis'}
-                    </button>
-                  </div>
-                )}
-
-                {/* Message Feed */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {messages.map((m) =>
-                    m.type === 'commit' || (m as any).commit ? (
-                      <div key={m.id} className="w-full">
-                        <CommitCard
-                          commit={
-                            (m as any).commit || {
-                              id: m.id,
-                              hash: m.commitHash || m.id,
-                              shortHash: (m.commitHash || m.id).slice(0, 7),
-                              message: m.text,
-                              author: 'Developer',
-                              timestamp: new Date(m.timestamp).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              }),
-                              branch: activeBranch?.name || 'main',
-                              filesChanged: 1,
-                              additions: 0,
-                              deletions: 0,
-                              isGitHubSync: true,
-                              source: 'github',
-                            }
-                          }
-                          onViewDetail={(commit) => {
-                            setSelectedCommitDiff(commit);
-                            setIsCommitDiffOpen(true);
-                          }}
-                          onPreview={() => {
-                            setMobileView('preview');
-                          }}
-                          isCurrentPreview={false}
-                        />
-                      </div>
-                    ) : (
-                      <div
-                        key={m.id}
-                        className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
-                      >
-                        <div className="flex items-center gap-2 mb-1 px-1">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            {m.sender === 'user' ? 'Pengguna' : 'ArtaStudio AI'}
-                          </span>
-                          <span className="text-[10px] text-slate-600">
-                            {new Date(m.timestamp).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        </div>
-                        <div
-                          className={`max-w-[85%] rounded-xl p-3 text-xs leading-relaxed ${
-                            m.sender === 'user'
-                              ? 'bg-amber-500 text-slate-950 font-medium rounded-tr-none shadow-md shadow-amber-500/10'
-                              : 'bg-slate-900/90 text-slate-200 border border-slate-800 rounded-tl-none'
-                          }`}
-                        >
-                          {m.text ? (
-                            <p className="whitespace-pre-wrap">{m.text}</p>
-                          ) : m.sender === 'assistant' && m.status !== 'done' ? (
-                            <p className="text-slate-400 italic text-[11px] animate-pulse">
-                              Sedang memproses instruksi Anda...
-                            </p>
-                          ) : null}
-                          {/* Collapsible Action Log & Tool Execution Inspector (Ala Orca / Lovable) */}
-                          {m.sender === 'assistant' && (
-                            <ActionLogInspector
-                              actionLogs={m.actionLogs}
-                              status={m.status}
-                              statusMessage={(m as any).statusMessage}
-                              isLatestAssistant={m.id === latestAssistantMsgId}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    )
-                  )}
-                  <div ref={chatScrollRef}></div>
-                </div>
-
-                {/* Chat Input Form */}
-                <form
-                  onSubmit={handleSendMessage}
-                  className="p-3 border-t border-slate-800/80 bg-slate-950/80 backdrop-blur-sm"
-                >
-                  <div className="relative flex items-center">
-                    <textarea
-                      value={inputPrompt}
-                      onChange={(e) => setInputPrompt(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSendMessage();
-                        }
-                      }}
-                      placeholder="Tanyakan atau instruksikan perubahan kode pada ArtaStudio..."
-                      rows={2}
-                      className="w-full bg-slate-900 text-xs text-slate-100 placeholder-slate-500 border border-slate-800 rounded-lg p-2.5 pr-20 focus:outline-none focus:border-amber-500 transition-colors resize-none font-sans"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputPrompt.trim() || isSendingPrompt}
-                      className="absolute right-2 bottom-2.5 px-3 py-1.5 rounded-md text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 disabled:opacity-40 transition-all"
-                    >
-                      Kirim
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between mt-1 text-[10px] text-slate-500 px-1">
-                    <span>Tekan Enter untuk kirim, Shift + Enter baris baru</span>
-                    <button
-                      type="button"
-                      onClick={() => setShowLogs(!showLogs)}
-                      className="hover:text-slate-300 transition-colors"
-                    >
-                      {showLogs ? 'Sembunyikan Log' : 'Tampilkan Log'}
-                    </button>
-                  </div>
-                </form>
-                </>
-                )}
+                {/* Pure Native Debian Terminal */}
+                <UniversalAgentTerminal
+                  projectPath={selectedBranchPath || selectedRepo?.defaultPath || ""}
+                  projectName={selectedRepo?.name || 'Workspace'}
+                  wsConnected={wsConnected}
+                />
               </section>
             ) : null}
 
@@ -2174,22 +2073,15 @@ export default function App() {
 
             {/* Right Column: Live Preview Viewport */}
             <section className="flex-1 flex flex-col bg-[#0a0f19] relative min-w-0 w-full">
-              {/* Button restore chat when minimized */}
+              {/* Button restore terminal when minimized */}
               {!isChatOpen && (
                 <button
                   onClick={() => setIsChatOpen(true)}
-                  title="Buka Kembali Chat AI"
+                  title="Buka Kembali Terminal Debian"
                   className="absolute left-3 top-12 z-30 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700/80 text-amber-400 hover:text-amber-300 shadow-xl flex items-center gap-1.5 text-xs font-semibold backdrop-blur"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                    />
-                  </svg>
-                  <span>Buka Chat AI</span>
+                  <span className="text-sm">🐧</span>
+                  <span>Buka Terminal Debian</span>
                 </button>
               )}
 
@@ -2384,8 +2276,13 @@ export default function App() {
         }}
         isDeploying={isDeploying}
         onSendToChat={(promptText: string) => {
-          setInputPrompt(promptText);
-          setMobileView('chat');
+          // Kirim langsung ke terminal yang sedang aktif (OpenCode / Agy / CommandCode)
+          setIsChatOpen(true);
+          window.dispatchEvent(
+            new CustomEvent('artastudio:terminal:input', {
+              detail: { text: promptText },
+            })
+          );
         }}
       />
 

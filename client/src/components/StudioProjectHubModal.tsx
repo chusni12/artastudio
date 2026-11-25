@@ -93,6 +93,13 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
   onOpenIndexedDbTest,
 }) => {
   const [activeTab, setActiveTab] = useState<HubTabId>(initialTab || 'domains');
+  const [maxWorkers, setMaxWorkers] = useState<number>(() => {
+    try {
+      return parseInt(localStorage.getItem('artastudio_max_workers') || '5', 10);
+    } catch {
+      return 5;
+    }
+  });
   const [gaId, setGaId] = useState('');
   const [isGaSaved, setIsGaSaved] = useState(false);
   const [customDomainInput, setCustomDomainInput] = useState('');
@@ -1174,6 +1181,41 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
                     <button className="mt-1 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer">
                       Kelola Secrets ↗
                     </button>
+                  </div>
+
+                  {/* Orca Worker Swarm Settings Card */}
+                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/50 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-amber-400 font-bold text-sm">🐝</span>
+                        <span className="font-semibold text-slate-200 text-xs">
+                          Orca Worker Swarm (Kapasitas Paralel)
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
+                        {maxWorkers} Worker Maksimal
+                      </span>
+                    </div>
+                    <p className="text-slate-400 text-[11px] leading-relaxed">
+                      Atur batas maksimal instance worker independen yang dapat di-spawn secara simultan untuk proyek ini (1 s/d 32). Seluruh worker otomatis mewarisi login akun CLI server.
+                    </p>
+                    <div className="flex items-center gap-3 pt-1">
+                      <input
+                        type="range"
+                        min={1}
+                        max={32}
+                        value={maxWorkers}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setMaxWorkers(val);
+                          localStorage.setItem('artastudio_max_workers', String(val));
+                        }}
+                        className="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                      />
+                      <span className="font-mono text-xs font-bold text-amber-400 min-w-8 text-right bg-slate-950 px-2 py-1 rounded border border-slate-800">
+                        {maxWorkers}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Logs Box */}

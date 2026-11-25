@@ -18,9 +18,27 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
   const xtermInstance = useRef<Terminal | null>(null);
   const fitAddonInstance = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const sessionId = useRef<string>(`term_${Date.now()}`);
 
-  const [activeTab, setActiveTab] = useState<'opencode' | 'agy' | 'claude' | 'bash'>('opencode');
+  // Active Role Tab: 'thinker' (Pemikir) | 'worker_1' | 'worker_2' ...
+  const [activeRoleId, setActiveRoleId] = useState<string>('thinker');
+  // List of spawned worker IDs
+  const [workers, setWorkers] = useState<number[]>([1]);
+
+  // Max workers limit from settings (1 - 32, default 5)
+  const maxWorkers = (() => {
+    try {
+      const stored = localStorage.getItem('artastudio_max_workers');
+      return stored ? Math.min(Math.max(parseInt(stored, 10), 1), 32) : 5;
+    } catch {
+      return 5;
+    }
+  })();
+
+  // Current session ID based on active project & role
+  const projectKey = (projectPath || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const currentSessionId = `${projectKey}__${activeRoleId}`;
+  const currentSessionIdRef = useRef<string>(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
 
   // Inisialisasi xterm & PTY WebSocket Connection
   useEffect(() => {
@@ -60,9 +78,25 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     term.open(terminalRef.current);
     term.focus();
 
-    try {
-      fitAddon.fit();
-    } catch {}
+    const doFit = () => {
+      try {
+        fitAddon.fit();
+        if (socket && socket.readyState === WebSocket.OPEN && term.cols && term.rows) {
+          socket.send(
+            JSON.stringify({
+              channel: 'terminal',
+              action: 'resize',
+              sessionId: currentSessionIdRef.current,
+              cols: Math.max(term.cols, 80),
+              rows: Math.max(term.rows, 24),
+            })
+          );
+        }
+      } catch {}
+    };
+
+    setTimeout(doFit, 50);
+    setTimeout(doFit, 200);
 
     xtermInstance.current = term;
     fitAddonInstance.current = fitAddon;
@@ -74,19 +108,18 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     wsRef.current = socket;
 
     socket.onopen = () => {
-      // Inisialisasi PTY Session di Backend
+      // Inisialisasi sesi PTY di Backend
       socket.send(
         JSON.stringify({
           channel: 'terminal',
           action: 'init',
-          sessionId: sessionId.current,
+          sessionId: currentSessionIdRef.current,
           projectPath,
           cols: Math.max(term.cols || 80, 80),
           rows: Math.max(term.rows || 24, 24),
-          // Start pure interactive shell
-          command: undefined,
         })
       );
+      setTimeout(doFit, 100);
     };
 
     socket.onmessage = (event) => {
@@ -95,6 +128,17 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
         if (payload.channel === 'terminal') {
           if (payload.event === 'output' && payload.data) {
             term.write(payload.data);
+            // Tanggapi CPR query jika terminal client membutuhkannya
+            if (payload.data.includes('\x1b[6n') && socket.readyState === WebSocket.OPEN) {
+              socket.send(
+                JSON.stringify({
+                  channel: 'terminal',
+                  action: 'input',
+                  sessionId: currentSessionIdRef.current,
+                  data: '\x1b[1;1R',
+                })
+              );
+            }
           } else if (payload.event === 'exit') {
             term.write(`\r\n\x1b[90m[Proses shell keluar dengan kode: ${payload.code}]\x1b[0m\r\n`);
           }
@@ -111,12 +155,33 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
           JSON.stringify({
             channel: 'terminal',
             action: 'input',
-            sessionId: sessionId.current,
+            sessionId: currentSessionIdRef.current,
             data,
           })
         );
       }
     });
+
+    // Listener custom event untuk menerima prompt dari modal (Perbaiki Otomatis / Fix Semua)
+    const handleCustomTerminalInput = (e: Event) => {
+      const customEvent = e as CustomEvent<{ text: string }>;
+      if (customEvent.detail && customEvent.detail.text) {
+        const textToSend = customEvent.detail.text;
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(
+            JSON.stringify({
+              channel: 'terminal',
+              action: 'input',
+              sessionId: currentSessionIdRef.current,
+              data: `${textToSend}\r`,
+            })
+          );
+          term.focus();
+        }
+      }
+    };
+
+    window.addEventListener('artastudio:terminal:input', handleCustomTerminalInput);
 
     const handleResize = () => {
       try {
@@ -126,7 +191,7 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
             JSON.stringify({
               channel: 'terminal',
               action: 'resize',
-              sessionId: sessionId.current,
+              sessionId: currentSessionIdRef.current,
               cols: Math.max(term.cols || 80, 80),
               rows: Math.max(term.rows || 24, 24),
             })
@@ -139,30 +204,93 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
 
     return () => {
       onDataDisposable.dispose();
+      window.removeEventListener('artastudio:terminal:input', handleCustomTerminalInput);
       window.removeEventListener('resize', handleResize);
       socket.close();
       term.dispose();
     };
   }, [projectPath]);
 
-  // Handle Switch Agent Tab (Quick Launch)
-  const handleSwitchAgent = (agent: 'opencode' | 'agy' | 'claude' | 'bash') => {
-    setActiveTab(agent);
+  // Efek ketika berganti Tab Role (Pemikir ⟷ Worker)
+  useEffect(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !xtermInstance.current) {
+      return;
+    }
+
+    // Reset buffer layar xterm sebelum memuat buffer sesi yang baru
+    xtermInstance.current.reset();
+
+    // Kirim init untuk attach ke sesi target (atau spawn jika belum ada)
+    wsRef.current.send(
+      JSON.stringify({
+        channel: 'terminal',
+        action: 'init',
+        sessionId: currentSessionId,
+        projectPath,
+        cols: Math.max(xtermInstance.current.cols || 80, 80),
+        rows: Math.max(xtermInstance.current.rows || 24, 24),
+      })
+    );
+
+    try {
+      fitAddonInstance.current?.fit();
+    } catch {}
+
+    xtermInstance.current.focus();
+  }, [activeRoleId, currentSessionId, projectPath]);
+
+  // Handler: Tambah Worker Baru
+  const handleAddWorker = () => {
+    if (workers.length >= maxWorkers) return;
+    const nextWorkerId = workers.length > 0 ? Math.max(...workers) + 1 : 1;
+    setWorkers((prev) => [...prev, nextWorkerId]);
+    setActiveRoleId(`worker_${nextWorkerId}`);
+  };
+
+  // Handler: Tutup Worker
+  const handleCloseWorker = (wId: number) => {
+    if (workers.length <= 1) return;
+    const targetSession = `${projectKey}__worker_${wId}`;
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          channel: 'terminal',
+          action: 'kill',
+          sessionId: targetSession,
+        })
+      );
+    }
+
+    setWorkers((prev) => prev.filter((id) => id !== wId));
+    if (activeRoleId === `worker_${wId}`) {
+      setActiveRoleId('thinker');
+    }
+  };
+
+  // Helper untuk mengirim perintah langsung dari shortcut
+  const sendCommand = (cmd: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-    let launchCmd = '';
-    if (agent === 'opencode') launchCmd = 'opencode';
-    else if (agent === 'agy') launchCmd = 'agy';
-    else if (agent === 'claude') launchCmd = 'claude';
-    else if (agent === 'bash') launchCmd = 'clear';
-
-    // Kirim Ctrl+C (\x03) lalu jalankan perintah baru
     wsRef.current.send(
       JSON.stringify({
         channel: 'terminal',
         action: 'input',
-        sessionId: sessionId.current,
-        data: `\x03\r${launchCmd}\r`,
+        sessionId: currentSessionId,
+        data: `\x03\r\n${cmd}\r\n`,
+      })
+    );
+    xtermInstance.current?.focus();
+  };
+
+  // Helper keyboard touch mobile
+  const sendKey = (keyData: string) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(
+      JSON.stringify({
+        channel: 'terminal',
+        action: 'input',
+        sessionId: currentSessionId,
+        data: keyData,
       })
     );
     xtermInstance.current?.focus();
@@ -173,45 +301,179 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
       onClick={() => xtermInstance.current?.focus()}
       className="flex-1 flex flex-col bg-[#0a0f19] h-full overflow-hidden select-text cursor-text"
     >
-      {/* Pure Native Terminal Console Header */}
-      <div className="h-8 border-b border-slate-800/80 bg-slate-900/90 px-3 flex items-center justify-between text-xs shrink-0 select-none">
-        <div className="flex items-center gap-2 text-slate-300 font-mono text-[11px]">
-          <span className="text-amber-400 font-bold">💻</span>
-          <span className="font-semibold text-slate-200">Terminal Shell</span>
-          <span className="text-slate-600">|</span>
-          <span className="text-slate-400 truncate max-w-xs">{projectPath}</span>
+      {/* Orca Dual-Role Tab Header: [✓ Pemikir] & [• Worker 1..32] */}
+      <div className="h-9 border-b border-slate-800/80 bg-[#090d16] px-2 flex items-center justify-between text-xs shrink-0 select-none overflow-x-auto no-scrollbar">
+        {/* Left: Role Tabs */}
+        <div className="flex items-center gap-1">
+          {/* Tab Pemikir (The Thinker / Planner) */}
+          <button
+            type="button"
+            onClick={() => setActiveRoleId('thinker')}
+            className={`px-3 py-1.5 text-xs rounded-t-md flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeRoleId === 'thinker'
+                ? 'bg-[#0a0f19] text-emerald-300 font-bold border-t-2 border-emerald-400 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+            }`}
+            title="Terminal Pemikir (Chat & Perencana Tugas AI)"
+          >
+            <span className="text-emerald-400 font-black text-sm">✓</span>
+            <span>Pemikir</span>
+          </button>
+
+          {/* Tabs Worker Pool (The Executors) */}
+          {workers.map((wId) => {
+            const isSelected = activeRoleId === `worker_${wId}`;
+            return (
+              <div
+                key={wId}
+                onClick={() => setActiveRoleId(`worker_${wId}`)}
+                className={`group/w px-2.5 py-1.5 text-xs rounded-t-md flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-[#0a0f19] text-amber-300 font-bold border-t-2 border-amber-400 shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                }`}
+                title={`Terminal Worker ${wId} (Eksekutor Kode Bebas)`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isSelected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                  }`}
+                />
+                <span>Worker {wId}</span>
+                {workers.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCloseWorker(wId);
+                    }}
+                    className="ml-1 opacity-0 group-hover/w:opacity-100 hover:text-red-400 text-slate-500 p-0.5 rounded text-[10px] transition-opacity"
+                    title={`Hentikan Worker ${wId}`}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Button Add Worker (+) up to max limit */}
+          {workers.length < maxWorkers && (
+            <button
+              type="button"
+              onClick={handleAddWorker}
+              className="px-2 py-1 text-[11px] rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-amber-400 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer flex items-center gap-1"
+              title={`Tambah Worker Eksekutor (Maksimal ${maxWorkers})`}
+            >
+              <span>+ Worker</span>
+            </button>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Right: Quick CLI launchers & Clear */}
+        <div className="flex items-center gap-1.5">
+          {activeRoleId.startsWith('worker') && (
+            <div className="hidden sm:flex items-center gap-1 mr-1 text-[10px] font-mono">
+              <button
+                type="button"
+                onClick={() => sendCommand('agy')}
+                className="px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-400 hover:bg-emerald-900 border border-emerald-800/50"
+                title="Jalankan agy di worker ini"
+              >
+                agy
+              </button>
+              <button
+                type="button"
+                onClick={() => sendCommand('opencode')}
+                className="px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 hover:bg-amber-900 border border-amber-800/50"
+                title="Jalankan opencode di worker ini"
+              >
+                opencode
+              </button>
+              <button
+                type="button"
+                onClick={() => sendCommand('commandcode')}
+                className="px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-400 hover:bg-indigo-900 border border-indigo-800/50"
+                title="Jalankan commandcode di worker ini"
+              >
+                commandcode
+              </button>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                wsRef.current.send(JSON.stringify({ channel: 'terminal', action: 'input', sessionId: sessionId.current, data: '\x03\r\nclear\r\n' }));
-              }
-              xtermInstance.current?.focus();
+              sendCommand('clear');
             }}
             className="px-2 py-0.5 rounded text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono transition-colors"
-            title="Bersihkan Layar Terminal"
+            title="Bersihkan Layar Terminal (Ctrl+L)"
           >
-            Clear (Ctrl+L)
+            Clear
           </button>
           <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>TTY Online</span>
+            <span>TTY</span>
           </div>
         </div>
       </div>
 
-      {/* Terminal Viewport Container (Fixed Full Dimensions for TUI Alt-Screen Buffer) */}
+      {/* Terminal Viewport Container */}
       <div
         className="flex-1 w-full h-full p-2 bg-[#0a0f19] overflow-hidden outline-none cursor-text relative flex flex-col"
         ref={terminalRef}
         tabIndex={0}
         onClick={() => xtermInstance.current?.focus()}
-        style={{ minHeight: '400px' }}
+        style={{ minHeight: '380px' }}
       />
+
+      {/* Mobile & Android Virtual Keyboard Quick Bar */}
+      <div className="h-7 border-t border-slate-800/80 bg-slate-900/90 px-2 flex items-center gap-1.5 overflow-x-auto text-[10px] font-mono shrink-0 select-none">
+        <span className="text-slate-500 text-[9px] mr-0.5 shrink-0">Mobile Key:</span>
+        <button
+          type="button"
+          onClick={() => sendKey('\x1b')}
+          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
+        >
+          Esc
+        </button>
+        <button
+          type="button"
+          onClick={() => sendKey('\t')}
+          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
+        >
+          Tab
+        </button>
+        <button
+          type="button"
+          onClick={() => sendKey('\x03')}
+          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold active:scale-95"
+        >
+          Ctrl+C
+        </button>
+        <button
+          type="button"
+          onClick={() => sendKey('\x1b[A')}
+          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          onClick={() => sendKey('\x1b[B')}
+          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95"
+        >
+          ↓
+        </button>
+        <button
+          type="button"
+          onClick={() => sendKey('\r')}
+          className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold active:scale-95 ml-auto"
+        >
+          Enter ↵
+        </button>
+      </div>
     </div>
   );
 };
