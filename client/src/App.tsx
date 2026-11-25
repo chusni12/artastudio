@@ -1,3 +1,4 @@
+import { UniversalAgentTerminal } from './components/UniversalAgentTerminal';
 import { localDB } from './services/localDbService';
 import { AddProjectModal } from './components/AddProjectModal';
 import { StudioProjectHubModal, HubTabId } from './components/StudioProjectHubModal';
@@ -242,6 +243,7 @@ export default function App() {
   const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
   const [chatWidthPercent, setChatWidthPercent] = useState<number>(30);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [middlePanelMode, setMiddlePanelMode] = useState<'terminal' | 'chat'>('terminal');
 
   const wsRef = useRef<WebSocket | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -894,7 +896,7 @@ export default function App() {
         body: JSON.stringify({
           sessionId,
           text,
-          projectPath: selectedBranchPath || selectedRepo?.defaultPath || process.cwd(),
+          projectPath: selectedBranchPath || selectedRepo?.defaultPath || "",
           engineMode: (() => {
             try {
               const cfg = localStorage.getItem('artastudio_ai_config');
@@ -951,7 +953,7 @@ export default function App() {
   };
 
   const handleOpenSecurityAudit = async () => {
-    const targetPath = selectedBranchPath || selectedRepo?.defaultPath || process.cwd();
+    const targetPath = selectedBranchPath || selectedRepo?.defaultPath || "";
     setIsSecurityModalOpen(true);
     setSecurityReport(null);
     setIsLoadingSecurity(true);
@@ -1989,9 +1991,35 @@ export default function App() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
+                    {/* Switcher: Terminal Agent vs Chat Klasik */}
+                    <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-md border border-slate-800 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setMiddlePanelMode('terminal')}
+                        className={`px-2 py-0.5 rounded font-bold transition-all ${
+                          middlePanelMode === 'terminal'
+                            ? 'bg-amber-500 text-slate-950 shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        💻 Terminal Agent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMiddlePanelMode('chat')}
+                        className={`px-2 py-0.5 rounded font-bold transition-all ${
+                          middlePanelMode === 'chat'
+                            ? 'bg-amber-500 text-slate-950 shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        💬 Chat Klasik
+                      </button>
+                    </div>
+
                     <button
                       onClick={() => setIsChatOpen(false)}
-                      title="Minimize / Sembunyikan Chat (Preview Layar Penuh)"
+                      title="Minimize / Sembunyikan Panel (Preview Layar Penuh)"
                       className="px-2 py-0.5 rounded text-[11px] border border-slate-800 bg-slate-900 hover:border-slate-700 text-slate-400 hover:text-slate-200 flex items-center gap-1"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2007,6 +2035,15 @@ export default function App() {
                   </div>
                 </div>
 
+                {middlePanelMode === 'terminal' ? (
+                  <UniversalAgentTerminal
+                    projectPath={selectedBranchPath || selectedRepo?.defaultPath || ""}
+                    projectName={selectedRepo?.name || 'Workspace'}
+                    wsConnected={wsConnected}
+                    onSendToChat={(prompt) => setInputPrompt(prompt)}
+                  />
+                ) : (
+                  <>
                 {/* Error Sensor Banner */}
                 {activeErrors.length > 0 && (
                   <div className="p-3 bg-red-950/40 border-b border-red-800/50 flex items-center justify-between">
@@ -2143,6 +2180,8 @@ export default function App() {
                     </button>
                   </div>
                 </form>
+                </>
+                )}
               </section>
             ) : null}
 

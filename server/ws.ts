@@ -1,10 +1,12 @@
 import { Server as HttpServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { WebSocketChannel, WebSocketEvent } from '../shared/types';
+import { terminalManager } from './services/terminalManager';
 
 interface ExtendedWebSocket extends WebSocket {
   isAlive: boolean;
   subscriptions: Set<string>;
+  terminalSessionId?: string;
 }
 
 let wssInstance: WebSocketServer | null = null;
@@ -16,7 +18,7 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
   wss.on('connection', (ws: WebSocket) => {
     const extWs = ws as ExtendedWebSocket;
     extWs.isAlive = true;
-    extWs.subscriptions = new Set<string>(['logs', 'errors', 'chat', 'system', 'workspaces', 'process', 'git']);
+    extWs.subscriptions = new Set<string>(['logs', 'errors', 'chat', 'system', 'workspaces', 'process', 'git', 'terminal']);
 
     // Send initial connected greeting
     const welcomeMsg: WebSocketEvent<{ status: string; clientCount: number }> = {
@@ -37,6 +39,28 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
     extWs.on('message', (rawMessage: string | Buffer) => {
       try {
         const payload = JSON.parse(rawMessage.toString());
+        
+        // 1. Terminal Channel Messages
+        if (payload.channel === 'terminal') {
+          if (payload.action === 'init') {
+            const sessId = payload.sessionId || `term_${Date.now()}`;
+            extWs.terminalSessionId = sessId;
+            terminalManager.createSession(sessId, payload.projectPath, extWs, payload.command);
+          } else if (payload.action === 'input' && payload.data) {
+            const sessId = extWs.terminalSessionId || payload.sessionId;
+            if (sessId) {
+              terminalManager.write(sessId, payload.data);
+            }
+          } else if (payload.action === 'kill') {
+            const sessId = extWs.terminalSessionId || payload.sessionId;
+            if (sessId) {
+              terminalManager.killSession(sessId);
+            }
+          }
+          return;
+        }
+
+        // 2. Generic Subscription
         if (payload.action === 'subscribe' && typeof payload.channel === 'string') {
           extWs.subscriptions.add(payload.channel);
         } else if (payload.action === 'unsubscribe' && typeof payload.channel === 'string') {
@@ -50,15 +74,24 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
     });
 
     extWs.on('close', () => {
-      extWs.subscriptions.clear();
+      if (extWs.terminalSessionId) {
+        terminalManager.killSession(extWs.terminalSessionId);
+      }
+    });
+
+    extWs.on('error', (err) => {
+      console.warn('[WebSocket] Client error:', err.message);
     });
   });
 
-  // Keep-alive heartbeat interval (every 30 seconds)
+  // Heartbeat interval to clean up dead connections
   const heartbeatInterval = setInterval(() => {
-    wss.clients.forEach((client) => {
-      const extWs = client as ExtendedWebSocket;
+    wss.clients.forEach((ws) => {
+      const extWs = ws as ExtendedWebSocket;
       if (!extWs.isAlive) {
+        if (extWs.terminalSessionId) {
+          terminalManager.killSession(extWs.terminalSessionId);
+        }
         return extWs.terminate();
       }
       extWs.isAlive = false;
@@ -73,7 +106,11 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
   return wss;
 }
 
-export function broadcastWebSocketEvent<T>(channel: WebSocketChannel, event: string, data: T): void {
+export function broadcastWebSocketEvent<T = unknown>(
+  channel: WebSocketChannel,
+  event: string,
+  data: T
+): void {
   if (!wssInstance) return;
 
   const payload: WebSocketEvent<T> = {
@@ -86,15 +123,13 @@ export function broadcastWebSocketEvent<T>(channel: WebSocketChannel, event: str
   const message = JSON.stringify(payload);
 
   wssInstance.clients.forEach((client) => {
-    const extWs = client as ExtendedWebSocket;
-    if (extWs.readyState === WebSocket.OPEN) {
-      if (!extWs.subscriptions || extWs.subscriptions.has(channel)) {
-        extWs.send(message);
+    const extClient = client as ExtendedWebSocket;
+    if (extClient.readyState === WebSocket.OPEN && extClient.subscriptions?.has(channel)) {
+      try {
+        extClient.send(message);
+      } catch (err) {
+        console.warn(`[WebSocket] Failed to send message to client on channel ${channel}:`, err);
       }
     }
   });
-}
-
-export function getWebSocketServer(): WebSocketServer | null {
-  return wssInstance;
 }
