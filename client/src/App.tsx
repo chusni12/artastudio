@@ -240,7 +240,7 @@ export default function App() {
   // Layout & Resizing States (Desktop)
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
-  const [chatWidthPercent, setChatWidthPercent] = useState<number>(50);
+  const [chatWidthPercent, setChatWidthPercent] = useState<number>(30);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -1759,23 +1759,7 @@ export default function App() {
 
           {/* Main 3-Column Studio Workspace */}
           <div className="flex-1 flex overflow-hidden relative">
-            {/* Toggle Sidebar Button when collapsed */}
-            {!isSidebarOpen && (
-              <button
-                onClick={() => setIsSidebarOpen(true)}
-                title="Buka Sidebar Proyek"
-                className="absolute left-2 top-2 z-30 p-1.5 rounded-md bg-slate-900 border border-slate-700 text-slate-300 hover:text-amber-400 hover:border-amber-500/50 shadow-lg transition-all"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M4 6h16M4 12h16M4 18h7"
-                  />
-                </svg>
-              </button>
-            )}
+{/* Clean Workspace Header Bar (No overlapping absolute button) */}
 
             {/* Left Column: Workspace & Git Timeline */}
             {isSidebarOpen && (
