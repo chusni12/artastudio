@@ -6,6 +6,7 @@
  */
 
 import { spawn, execSync } from 'node:child_process';
+import * as http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
@@ -49,23 +50,71 @@ Panduan Penggunaan ArtaStudio CLI:
 }
 
 // ==============================================================================
+// Util: deteksi proses ArtaStudio (fallback ketika lsof/netstat tidak bisa
+// membaca port, misal di Termux/container dengan batasan /proc)
+// ==============================================================================
+function findArtastudioPids() {
+  const pids = [];
+  try {
+    const out = execSync('ps -eo pid=,args=', { encoding: 'utf-8' });
+    for (const line of out.split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+(.+)$/);
+      if (!m) continue;
+      const [, pid, args] = m;
+      if (!/(server\/index\.ts|tsx watch|concurrently|vite client)/.test(args)) continue;
+      // Hanya proses yang berjalan di folder project ini
+      try {
+        const cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
+        if (cwd === projectRoot || cwd.startsWith(projectRoot + path.sep)) pids.push(pid);
+      } catch {
+        /* /proc tidak tersedia: lewati */
+      }
+    }
+  } catch {
+    /* ps gagal: biarkan */
+  }
+  return pids;
+}
+
+// ==============================================================================
 // 2. Perintah: artastudio stop / exit
 // ==============================================================================
 if (command === 'stop' || command === 'exit' || command === 'kill' || command === 'down') {
   console.log(`Menghentikan seluruh proses ArtaStudio di port ${PORT}...`);
+  let stopped = false;
   try {
     if (isWindows) {
       execSync(`for /f "tokens=5" %a in ('netstat -aon ^| findstr :${PORT}') do taskkill /f /pid %a`, {
         shell: 'cmd.exe',
         stdio: 'ignore',
       });
+      stopped = true;
     } else {
-      execSync(`lsof -ti :${PORT} | xargs kill -9`, { stdio: 'ignore' });
+      try {
+        const out = execSync(`lsof -ti :${PORT}`, { encoding: 'utf-8' }).trim();
+        if (out) {
+          execSync(`kill -9 ${out.split(/\s+/).join(' ')}`, { stdio: 'ignore' });
+          stopped = true;
+        }
+      } catch {
+        /* lsof tidak bisa membaca port -> pakai fallback di bawah */
+      }
+      if (!stopped) {
+        const pids = findArtastudioPids();
+        if (pids.length) {
+          execSync(`kill -9 ${pids.join(' ')}`, { stdio: 'ignore' });
+          stopped = true;
+        }
+      }
     }
-    console.log('✅ ArtaStudio berhasil ditutup sepenuhnya!');
   } catch {
-    console.log(`ℹ️ Tidak ada ArtaStudio yang sedang berjalan di port ${PORT}.`);
+    /* biarkan */
   }
+  console.log(
+    stopped
+      ? '✅ ArtaStudio berhasil ditutup sepenuhnya!'
+      : `ℹ️ Tidak ada ArtaStudio yang sedang berjalan di port ${PORT}.`
+  );
   process.exit(0);
 }
 
@@ -73,19 +122,31 @@ if (command === 'stop' || command === 'exit' || command === 'kill' || command ==
 // 3. Perintah: artastudio status
 // ==============================================================================
 if (command === 'status') {
-  try {
-    let output = '';
-    if (isWindows) {
-      output = execSync(`netstat -aon | findstr :${PORT}`, { encoding: 'utf-8', shell: 'cmd.exe' });
-    } else {
-      output = execSync(`lsof -ti :${PORT}`, { encoding: 'utf-8' });
+  const ping = () =>
+    new Promise((resolve) => {
+      const req = http.get({ host: '127.0.0.1', port: Number(PORT) || 4000, path: '/', timeout: 2000 }, (res) => {
+        res.resume();
+        resolve(true);
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+
+  let alive = await ping();
+  if (!alive && !isWindows) {
+    try {
+      const out = execSync(`lsof -ti :${PORT}`, { encoding: 'utf-8' }).trim();
+      alive = Boolean(out);
+    } catch {
+      alive = findArtastudioPids().length > 0;
     }
-    if (output && output.trim()) {
-      console.log(`🟢 ArtaStudio AKTIF berjalan di http://localhost:${PORT}`);
-    } else {
-      console.log('🔴 ArtaStudio sedang TIDAK BERJALAN.');
-    }
-  } catch {
+  }
+  if (alive) {
+    console.log(`🟢 ArtaStudio AKTIF berjalan di http://localhost:${PORT}`);
+  } else {
     console.log('🔴 ArtaStudio sedang TIDAK BERJALAN.');
   }
   process.exit(0);
