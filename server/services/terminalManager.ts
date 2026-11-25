@@ -28,18 +28,28 @@ export class TerminalManager {
     const shell = isWindows ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/bash');
     const cwd = projectPath || process.cwd();
 
-    // Spawn TRUE PTY TERMINAL (Bukan child_process pipe kaku)
-    const ptyProcess = ptyModule.spawn(shell, [], {
+    // Spawn TRUE PTY BASH/CMD INTERAKTIF
+    const ptyProcess = ptyModule.spawn(shell, isWindows ? [] : ['-l'], {
       name: 'xterm-256color',
-      cols: Math.max(cols || 80, 20),
-      rows: Math.max(rows || 24, 10),
+      cols: Math.max(cols || 100, 40),
+      rows: Math.max(rows || 30, 15),
       cwd,
       env: {
         ...process.env,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
+        FORCE_COLOR: '1',
       },
     });
+
+    // Jika user memilih agent (opencode / agy / claude), jalankan dengan enter nyata!
+    if (initialCmd && initialCmd !== 'bash') {
+      setTimeout(() => {
+        try {
+          ptyProcess.write(`${initialCmd}\r\n`);
+        } catch {}
+      }, 600);
+    }
 
     const session: TerminalSession = {
       id,
@@ -63,14 +73,7 @@ export class TerminalManager {
       this.sessions.delete(id);
     });
 
-    // Jalankan perintah awal jika ada (misal: opencode / agy)
-    if (initialCmd) {
-      setTimeout(() => {
-        try {
-          ptyProcess.write(`${initialCmd}\r`);
-        } catch {}
-      }, 500);
-    }
+    // PTY process langsung mengeksekusi agent binary di atas
 
     return session;
   }

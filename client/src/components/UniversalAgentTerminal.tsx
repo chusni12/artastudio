@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css?inline';
 
 interface UniversalAgentTerminalProps {
   projectPath: string;
@@ -31,8 +32,12 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'block',
-      fontSize: 13,
+      fontSize: 12,
+      lineHeight: 1.2,
       fontFamily: '"JetBrains Mono", Menlo, Monaco, Consolas, monospace',
+      allowProposedApi: true,
+      convertEol: true,
+      scrollback: 5000,
       theme: {
         background: '#0a0f19',
         foreground: '#f1f5f9',
@@ -238,12 +243,13 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
         </div>
       </div>
 
-      {/* Terminal Viewport Container */}
+      {/* Terminal Viewport Container (Fixed Full Dimensions for TUI Alt-Screen Buffer) */}
       <div
-        className="flex-1 p-2 bg-[#0a0f19] overflow-hidden outline-none cursor-text"
+        className="flex-1 w-full h-full p-2 bg-[#0a0f19] overflow-hidden outline-none cursor-text relative flex flex-col"
         ref={terminalRef}
         tabIndex={0}
         onClick={() => xtermInstance.current?.focus()}
+        style={{ minHeight: '400px' }}
       />
     </div>
   );
