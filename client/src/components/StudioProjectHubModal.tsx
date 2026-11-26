@@ -125,8 +125,18 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
   const isTahqiq = projectId.includes('tahqiq') || projectName.toLowerCase().includes('tahqiq');
   const isArtaStudio = projectId.includes('artastudio') || (!isArtaLoka && !isTahqiq && (!selectedRepo || projectId === 'artastudio' || projectId === 'current/artastudio'));
 
-  // Connected domains per project
-  const [connectedDomains, setConnectedDomains] = useState<DomainItem[]>([]);
+  const previewUrl = isArtaLoka
+    ? 'http://localhost:5199'
+    : isTahqiq
+    ? 'http://localhost:3000'
+    : 'http://localhost:5173';
+
+  // State untuk drawer preview robots.txt / sitemap / meta
+  const [activeSeoInspector, setActiveSeoInspector] = useState<'robots' | 'sitemap' | 'meta' | 'gsc' | null>(null);
+  const [gscVerificationTag, setGscVerificationTag] = useState(() => {
+    return localStorage.getItem(`artastudio_gsc_${projectId}`) || '';
+  });
+  const [isGscSaved, setIsGscSaved] = useState(false);
   // SEO inspection result state
   const [seoResult, setSeoResult] = useState<SeoInspectionResult | null>(null);
   const [isCheckingSeo, setIsCheckingSeo] = useState<boolean>(false);
@@ -994,59 +1004,151 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
                     </span>
                   </div>
 
-                  {/* Real robots.txt check */}
+                  {/* Real robots.txt check with interactive viewer */}
                   <div
-                    className={`p-3 rounded-lg border flex items-center justify-between ${
+                    onClick={() => setActiveSeoInspector(activeSeoInspector === 'robots' ? null : 'robots')}
+                    className={`p-3 rounded-lg border flex flex-col transition-all cursor-pointer ${
                       seoResult?.hasRobots
-                        ? 'border-slate-800 bg-slate-900/50'
-                        : 'border-amber-900/40 bg-amber-950/10'
+                        ? 'border-slate-800 bg-slate-900/50 hover:bg-slate-900/80'
+                        : 'border-amber-900/40 bg-amber-950/10 hover:bg-amber-950/20'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span>{seoResult?.hasRobots ? '✓' : '⚠'}</span>
-                      <span className={seoResult?.hasRobots ? 'text-slate-300' : 'text-amber-300 font-medium'}>
-                        Crawler rules ({seoResult?.hasRobots ? `ditemukan di ${seoResult.robotsRelPath}` : 'robots.txt belum dibuat'})
-                      </span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span>{seoResult?.hasRobots ? '✓' : '⚠'}</span>
+                        <span className={seoResult?.hasRobots ? 'text-slate-300 font-medium' : 'text-amber-300 font-medium'}>
+                          Crawler rules ({seoResult?.hasRobots ? `ditemukan di ${seoResult.robotsRelPath}` : 'robots.txt belum dibuat'})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                            seoResult?.hasRobots
+                              ? 'text-emerald-400 bg-emerald-950/60'
+                              : 'text-amber-400 bg-amber-950/60'
+                          }`}
+                        >
+                          {seoResult?.hasRobots ? '200 OK' : 'Perlu Dibuat'}
+                        </span>
+                        <span className="text-xs text-slate-500 font-mono">
+                          {activeSeoInspector === 'robots' ? '▲ Tutup' : '▼ Lihat Isi'}
+                        </span>
+                      </div>
                     </div>
-                    <span
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                        seoResult?.hasRobots
-                          ? 'text-emerald-400 bg-emerald-950/60'
-                          : 'text-amber-400 bg-amber-950/60'
-                      }`}
-                    >
-                      {seoResult?.hasRobots ? '200 OK' : 'Perlu Dibuat'}
-                    </span>
+                    {activeSeoInspector === 'robots' && seoResult?.robotsPreview && (
+                      <div className="mt-2.5 pt-2 border-t border-slate-800/80">
+                        <pre className="p-2.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-400 max-h-36 overflow-y-auto leading-relaxed whitespace-pre select-text">
+                          {seoResult.robotsPreview}
+                        </pre>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Real sitemap check */}
+                  {/* Real sitemap check with interactive viewer */}
                   <div
-                    className={`p-3 rounded-lg border flex items-center justify-between ${
+                    onClick={() => setActiveSeoInspector(activeSeoInspector === 'sitemap' ? null : 'sitemap')}
+                    className={`p-3 rounded-lg border flex flex-col transition-all cursor-pointer ${
                       seoResult?.hasSitemap
-                        ? 'border-slate-800 bg-slate-900/50'
-                        : 'border-amber-900/40 bg-amber-950/10'
+                        ? 'border-slate-800 bg-slate-900/50 hover:bg-slate-900/80'
+                        : 'border-amber-900/40 bg-amber-950/10 hover:bg-amber-950/20'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span>{seoResult?.hasSitemap ? '✓' : '⚠'}</span>
-                      <span className={seoResult?.hasSitemap ? 'text-slate-300' : 'text-amber-300 font-medium'}>
-                        Sitemap ({seoResult?.hasSitemap ? `aktif di ${seoResult.sitemapRelPath}` : 'sitemap.xml belum dikonfigurasi'})
-                      </span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span>{seoResult?.hasSitemap ? '✓' : '⚠'}</span>
+                        <span className={seoResult?.hasSitemap ? 'text-slate-300 font-medium' : 'text-amber-300 font-medium'}>
+                          Sitemap ({seoResult?.hasSitemap ? `aktif di ${seoResult.sitemapRelPath}` : 'sitemap.xml belum dikonfigurasi'})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                            seoResult?.hasSitemap
+                              ? 'text-emerald-400 bg-emerald-950/60'
+                              : 'text-amber-400 bg-amber-950/60'
+                          }`}
+                        >
+                          {seoResult?.hasSitemap ? (seoResult.sitemapType === 'dynamic' ? 'Dynamic SSR' : '200 OK') : 'Check'}
+                        </span>
+                        <span className="text-xs text-slate-500 font-mono">
+                          {activeSeoInspector === 'sitemap' ? '▲ Tutup' : '▼ Rincian'}
+                        </span>
+                      </div>
                     </div>
-                    <span
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                        seoResult?.hasSitemap
-                          ? 'text-emerald-400 bg-emerald-950/60'
-                          : 'text-amber-400 bg-amber-950/60'
-                      }`}
-                    >
-                      {seoResult?.hasSitemap ? (seoResult.sitemapType === 'dynamic' ? 'Dynamic SSR' : '200 OK') : 'Check'}
-                    </span>
+                    {activeSeoInspector === 'sitemap' && (
+                      <div className="mt-2.5 pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 space-y-1">
+                        <div>Lokasi Berkas: <code className="text-amber-300 font-mono">{seoResult?.sitemapRelPath || '-'}</code></div>
+                        <div>Tipe Renderer: <span className="text-emerald-400 font-mono">{seoResult?.sitemapType || 'XML'}</span></div>
+                        <div className="pt-1">
+                          <a
+                            href={previewUrl ? `${previewUrl}/sitemap.xml` : '#'}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-amber-400 hover:underline inline-flex items-center gap-1 text-[11px]"
+                          >
+                            <span>Buka XML Sitemap di Tab Baru</span>
+                            <span>↗</span>
+                          </a>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="p-3 rounded-lg border border-slate-800 bg-slate-900/50 flex items-center justify-between">
-                    <span className="text-slate-400">ℹ Google Search Console isn't fully set up</span>
-                    <span className="text-[10px] text-slate-500 font-mono">Optional</span>
+                  {/* Google Search Console Setup & Verification Tag */}
+                  <div
+                    onClick={() => setActiveSeoInspector(activeSeoInspector === 'gsc' ? null : 'gsc')}
+                    className="p-3 rounded-lg border border-slate-800 bg-slate-900/50 hover:bg-slate-900/80 flex flex-col transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span>{gscVerificationTag ? '✓' : 'ℹ'}</span>
+                        <span className={gscVerificationTag ? 'text-slate-200 font-medium' : 'text-slate-400'}>
+                          {gscVerificationTag ? 'Google Search Console terkonfigurasi' : "Google Search Console isn't fully set up"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${gscVerificationTag ? 'text-emerald-400 bg-emerald-950/60' : 'text-slate-500'}`}>
+                          {gscVerificationTag ? 'Tersambung' : 'Optional'}
+                        </span>
+                        <span className="text-xs text-slate-500 font-mono">
+                          {activeSeoInspector === 'gsc' ? '▲ Tutup' : '⚙️ Setup'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {activeSeoInspector === 'gsc' && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="mt-3 pt-3 border-t border-slate-800/80 space-y-2 cursor-default"
+                      >
+                        <p className="text-[11px] text-slate-400">
+                          Masukkan HTML meta tag verifikasi dari Google Search Console untuk <span className="text-amber-400 font-semibold">{projectName}</span>:
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={gscVerificationTag}
+                            onChange={(e) => {
+                              setGscVerificationTag(e.target.value);
+                              setIsGscSaved(false);
+                            }}
+                            placeholder='<meta name="google-site-verification" content="..." />'
+                            className="flex-1 bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-amber-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              localStorage.setItem(`artastudio_gsc_${projectId}`, gscVerificationTag);
+                              setIsGscSaved(true);
+                              setTimeout(() => setIsGscSaved(false), 2000);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors shrink-0"
+                          >
+                            {isGscSaved ? 'Tersimpan ✓' : 'Simpan'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
