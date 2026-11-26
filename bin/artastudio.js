@@ -240,7 +240,18 @@ if (command === 'update' || command === 'latest' || command === 'upgrade') {
   console.log('==========================================================');
   try {
     console.log('[1/3] Menarik pembaruan kode terbaru dari remote GitHub...');
-    execSync('git pull origin main', { cwd: projectRoot, stdio: 'inherit', shell: isWindows });
+    try {
+      execSync('git pull origin main', { cwd: projectRoot, stdio: 'inherit', shell: isWindows });
+    } catch (pullErr) {
+      // Jika ada perubahan file lokal yang bentrok di Windows/Termux, amankan dengan stash lalu pull ulang
+      console.log('ℹ️ Mendeteksi perubahan file lokal, mengamankan dengan auto-stash & pull ulang...');
+      try {
+        execSync('git stash', { cwd: projectRoot, stdio: 'ignore', shell: isWindows });
+        execSync('git pull origin main', { cwd: projectRoot, stdio: 'inherit', shell: isWindows });
+      } catch (retryErr) {
+        throw new Error(pullErr.message);
+      }
+    }
 
     console.log('\n[2/3] Memeriksa & memasang dependensi baru jika ada...');
     execSync('npm install --no-audit', { cwd: projectRoot, stdio: 'inherit', shell: isWindows });
