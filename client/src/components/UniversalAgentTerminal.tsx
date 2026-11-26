@@ -391,10 +391,20 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
       })
     );
 
-    // Auto-reload kanvas terminal seketika agar saat TUI (opencode/agy/omp) aktif, layarnya di-reconnect fresh
+    // Kirim sinyal Redraw Ctrl+L setelah jeda singkat agar TUI langsung muncul tanpa layar hitam
     setTimeout(() => {
-      reloadActiveTerminal();
-    }, 150);
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            channel: 'terminal',
+            action: 'input',
+            sessionId: currentSessionId,
+            data: '\x0c',
+          })
+        );
+      }
+      terminalInstances.current.get(currentSessionId)?.term.focus();
+    }, 400);
   };
 
   // Helper keyboard touch mobile
