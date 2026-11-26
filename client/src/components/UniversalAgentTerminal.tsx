@@ -180,6 +180,55 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
       }
     });
 
+    // Dukungan scroll sentuh untuk HP Android / Touch Screen
+    let touchStartY = 0;
+    termDiv.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length === 1) {
+          touchStartY = e.touches[0].clientY;
+        }
+      },
+      { passive: true }
+    );
+
+    termDiv.addEventListener(
+      'touchmove',
+      (e) => {
+        if (e.touches.length === 1) {
+          const touchY = e.touches[0].clientY;
+          const diff = touchStartY - touchY;
+
+          // Jika TUI sedang aktif dan menggunakan mouse tracking, biarkan atau kirim scroll
+          if (Math.abs(diff) > 16) {
+            const lines = Math.round(diff / 16);
+            if (term.modes.mouseTrackingMode !== 'none') {
+              // Di TUI (seperti opencode/agy/less): Kirim panah ke PTY untuk navigasi list
+              const key = lines > 0 ? '\x1b[B' : '\x1b[A';
+              const count = Math.min(Math.abs(lines), 3);
+              for (let i = 0; i < count; i++) {
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(
+                    JSON.stringify({
+                      channel: 'terminal',
+                      action: 'input',
+                      sessionId: sessId,
+                      data: key,
+                    })
+                  );
+                }
+              }
+            } else {
+              // Di buffer terminal biasa: Gulir halaman ke atas/bawah
+              term.scrollLines(lines);
+            }
+            touchStartY = touchY;
+          }
+        }
+      },
+      { passive: true }
+    );
+
     const instance: TerminalInstance = { term, fitAddon, element: termDiv };
     terminalInstances.current.set(sessId, instance);
 
@@ -556,17 +605,37 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => sendKey('\x1b[D')}
+            onClick={() => {
+              const inst = terminalInstances.current.get(currentSessionId);
+              if (inst) {
+                if (inst.term.modes.mouseTrackingMode !== 'none') {
+                  sendKey('\x1b[5~'); // Page Up untuk TUI
+                } else {
+                  inst.term.scrollLines(-15);
+                }
+              }
+            }}
             className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+            title="Gulir ke Atas (Page Up)"
           >
-            ←
+            PgUp ⇞
           </button>
           <button
             type="button"
-            onClick={() => sendKey('\x1b[C')}
+            onClick={() => {
+              const inst = terminalInstances.current.get(currentSessionId);
+              if (inst) {
+                if (inst.term.modes.mouseTrackingMode !== 'none') {
+                  sendKey('\x1b[6~'); // Page Down untuk TUI
+                } else {
+                  inst.term.scrollLines(15);
+                }
+              }
+            }}
             className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 active:scale-95 shrink-0"
+            title="Gulir ke Bawah (Page Down)"
           >
-            →
+            PgDn ⇟
           </button>
         </div>
       </div>
