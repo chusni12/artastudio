@@ -358,9 +358,30 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     }
   };
 
-  // Helper untuk mengirim perintah langsung dari shortcut
+  // Fungsi reload/recreate canvas terminal untuk tab aktif secara instan tanpa perlu reload seluruh halaman web
+  const reloadActiveTerminal = () => {
+    const sId = currentSessionIdRef.current;
+    const oldInst = terminalInstances.current.get(sId);
+    if (oldInst) {
+      try {
+        oldInst.term.dispose();
+        oldInst.element.remove();
+      } catch {}
+      terminalInstances.current.delete(sId);
+    }
+    const newInst = getOrCreateTerminal(sId, projectPath);
+    newInst.element.style.display = 'flex';
+    requestAnimationFrame(() => {
+      triggerFit(newInst, sId);
+      newInst.term.focus();
+    });
+  };
+
+  // Helper untuk mengirim perintah langsung dari shortcut dengan auto-reload guard
   const sendCommand = (cmd: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    
+    // Kirim command ke shell
     wsRef.current.send(
       JSON.stringify({
         channel: 'terminal',
@@ -369,7 +390,11 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
         data: `\x03\r\n${cmd}\r\n`,
       })
     );
-    terminalInstances.current.get(currentSessionId)?.term.focus();
+
+    // Auto-reload kanvas terminal seketika agar saat TUI (opencode/agy/omp) aktif, layarnya di-reconnect fresh
+    setTimeout(() => {
+      reloadActiveTerminal();
+    }, 150);
   };
 
   // Helper keyboard touch mobile
@@ -511,6 +536,18 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
             </div>
           )}
 
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              reloadActiveTerminal();
+            }}
+            className="px-2 py-0.5 rounded text-[10px] bg-slate-800 hover:bg-slate-700 text-amber-300 font-mono transition-colors flex items-center gap-1 cursor-pointer"
+            title="Muat Ulang / Segarkan Tampilan Terminal Ini"
+          >
+            <span>↻</span>
+            <span>Reload</span>
+          </button>
           <button
             type="button"
             onClick={(e) => {
