@@ -198,7 +198,18 @@ router.post('/apply-update', async (_req: Request, res: Response) => {
       progress: 25,
     });
 
-    await runGit(['pull', 'origin', 'main'], 60000);
+    let runGitOutput = '';
+    try {
+      runGitOutput = await runGit(['pull', 'origin', 'main'], 60000);
+    } catch (pullErr: any) {
+      // Jika git pull ditolak karena konflik editan lokal di HP/Termux, lakukan stash/rebase otomatis
+      try {
+        await runGit(['stash'], 10000);
+        runGitOutput = await runGit(['pull', 'origin', 'main'], 60000);
+      } catch (retryErr: any) {
+        throw new Error(retryErr?.stderr || retryErr?.message || pullErr?.stderr || pullErr?.message);
+      }
+    }
 
     let afterHead = '';
     try {

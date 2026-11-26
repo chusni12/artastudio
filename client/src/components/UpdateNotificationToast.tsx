@@ -91,9 +91,20 @@ export const UpdateNotificationToast: React.FC<UpdateNotificationToastProps> = (
     };
   }, []);
 
+  const [isDismissed, setIsDismissed] = useState(false);
+
+  if (isDismissed) {
+    return null;
+  }
+
   if (!updateInfo?.hasUpdate && phase === 'idle') {
     return null;
   }
+
+  const handleDismiss = () => {
+    setIsDismissed(true);
+    onDismiss?.();
+  };
 
   const handleApplyUpdate = async () => {
     if (phase === 'updating' || phase === 'success') return;
@@ -216,10 +227,10 @@ export const UpdateNotificationToast: React.FC<UpdateNotificationToastProps> = (
                 )}
               </div>
 
-              {!isUpdating && !isSuccess && (
+              {!isUpdating && (
                 <button
                   type="button"
-                  onClick={onDismiss}
+                  onClick={handleDismiss}
                   title="Tutup notifikasi"
                   aria-label="Tutup"
                   className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer shrink-0"
@@ -310,7 +321,7 @@ export const UpdateNotificationToast: React.FC<UpdateNotificationToastProps> = (
             </button>
             <button
               type="button"
-              onClick={onDismiss}
+              onClick={handleDismiss}
               className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
             >
               Nanti
@@ -337,7 +348,7 @@ export const UpdateNotificationToast: React.FC<UpdateNotificationToastProps> = (
             </button>
             <button
               type="button"
-              onClick={onDismiss}
+              onClick={handleDismiss}
               className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
             >
               Tutup
