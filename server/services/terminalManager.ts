@@ -30,13 +30,20 @@ export class TerminalManager {
     if (existing) {
       existing.ws = ws;
       existing.lastActive = Date.now();
-      if (cols > 0 && rows > 0) {
-        try {
-          existing.ptyProcess.resize(Math.max(cols, 80), Math.max(rows, 24));
-        } catch {}
+
+      // Selalu kirim seluruh buffer snapshot terakhir ke WebSocket client baru agar layar tidak pernah blank hitam!
+      if (existing.bufferHistory.length > 0 && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            channel: 'terminal',
+            event: 'output',
+            sessionId: id,
+            data: existing.bufferHistory.join(''),
+          })
+        );
       }
 
-      // Kirim trigger window resize / SIGWINCH agar TUI redraw dengan ukuran layar yang benar tanpa merusak input
+      // Kirim trigger window resize / SIGWINCH agar proses TUI menyesuaikan ukuran viewport
       if (cols > 0 && rows > 0) {
         try {
           existing.ptyProcess.resize(cols, rows);

@@ -265,16 +265,19 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     const inst = terminalInstances.current.get(sessId);
     if (inst) triggerFit(inst, sessId);
-    wsRef.current.send(
-      JSON.stringify({
-        channel: 'terminal',
-        action: 'init',
-        sessionId: sessId,
-        projectPath: pPath || projectPath,
-        cols: inst?.term.cols || 100,
-        rows: inst?.term.rows || 30,
-      })
-    );
+    // Kirim init untuk seluruh sesi yang terdaftar di frontend
+    terminalInstances.current.forEach((inst, sId) => {
+      wsRef.current?.send(
+        JSON.stringify({
+          channel: 'terminal',
+          action: 'init',
+          sessionId: sId,
+          projectPath: pPath || projectPath,
+          cols: inst?.term.cols || 100,
+          rows: inst?.term.rows || 30,
+        })
+      );
+    });
   };
 
   // Efek ketika berganti Tab Role atau berganti Proyek
