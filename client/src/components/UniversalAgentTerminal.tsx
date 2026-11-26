@@ -136,7 +136,7 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
     const termDiv = document.createElement('div');
-    termDiv.className = 'w-full h-full';
+    termDiv.className = 'w-full h-full flex flex-col flex-1 min-w-0 min-h-0';
     termDiv.style.display = 'none'; // Sembunyikan jika tidak aktif
     containerRef.current?.appendChild(termDiv);
 
@@ -241,13 +241,30 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     return instance;
   };
 
+  // Helper untuk melakukan auto-fit responsif dan sync resize ke backend
+  const triggerFit = (inst: TerminalInstance, sId: string) => {
+    try {
+      if (!inst.element || inst.element.style.display === 'none') return;
+      inst.fitAddon.fit();
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && inst.term.cols && inst.term.rows) {
+        wsRef.current.send(
+          JSON.stringify({
+            channel: 'terminal',
+            action: 'resize',
+            sessionId: sId,
+            cols: inst.term.cols,
+            rows: inst.term.rows,
+          })
+        );
+      }
+    } catch {}
+  };
+
   // Helper untuk mengirim inisialisasi sesi ke backend
   const initSessionOnServer = (sessId: string, pPath?: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     const inst = terminalInstances.current.get(sessId);
-    try {
-      inst?.fitAddon.fit();
-    } catch {}
+    if (inst) triggerFit(inst, sessId);
     wsRef.current.send(
       JSON.stringify({
         channel: 'terminal',
@@ -270,51 +287,31 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     // Tampilkan elemen terminal aktif, dan sembunyikan semua terminal sesi lain
     terminalInstances.current.forEach((inst, sId) => {
       if (sId === currentSessionId) {
-        inst.element.style.display = 'block';
-        setTimeout(() => {
-          try {
-            inst.fitAddon.fit();
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              wsRef.current.send(
-                JSON.stringify({
-                  channel: 'terminal',
-                  action: 'resize',
-                  sessionId: sId,
-                  cols: inst.term.cols,
-                  rows: inst.term.rows,
-                })
-              );
-            }
-          } catch {}
+        inst.element.style.display = 'flex';
+        // Jalankan fit beruntun (immediate, frame ke-1, dan 120ms) agar transisi flexbox CSS selesai merender ukuran nyata
+        triggerFit(inst, sId);
+        requestAnimationFrame(() => {
+          triggerFit(inst, sId);
           inst.term.focus();
-        }, 50);
+        });
+        setTimeout(() => {
+          triggerFit(inst, sId);
+          inst.term.focus();
+        }, 120);
       } else {
         inst.element.style.display = 'none';
       }
     });
   }, [currentSessionId, projectPath]);
 
-  // Pasang ResizeObserver pada container agar begitu ukuran berubah langsung fit presisi
+  // Pasang ResizeObserver pada container agar begitu ukuran berubah langsung fit presisi & auto-stretch
   useEffect(() => {
     if (!containerRef.current || typeof ResizeObserver === 'undefined') return;
 
     const observer = new ResizeObserver(() => {
       const activeInst = terminalInstances.current.get(currentSessionIdRef.current);
       if (activeInst && activeInst.element.style.display !== 'none') {
-        try {
-          activeInst.fitAddon.fit();
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(
-              JSON.stringify({
-                channel: 'terminal',
-                action: 'resize',
-                sessionId: currentSessionIdRef.current,
-                cols: activeInst.term.cols,
-                rows: activeInst.term.rows,
-              })
-            );
-          }
-        } catch {}
+        triggerFit(activeInst, currentSessionIdRef.current);
       }
     });
 
