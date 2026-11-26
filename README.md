@@ -1,11 +1,11 @@
-# 🚀 ArtaStudio
+# ArtaStudio
 
 > **AI-Powered Independent Web Development Suite & Live Preview Studio**  
 > Alternatif mandiri (*self-hosted*) dari Lovable / Bolt / v0 yang dapat dijalankan secara lokal di Linux, Windows, macOS, maupun Termux Android.
 
 ---
 
-## ⚡ Instalasi Cepat & Siap Pakai (1-Langkah)
+## Instalasi Cepat & Siap Pakai (1-Langkah)
 
 Cukup jalankan langkah ini di terminal perangkat mana saja:
 
@@ -73,7 +73,7 @@ Buka `http://localhost:4000` di browser Android Anda, buka menu **`⚙️ Lainny
 
 ---
 
-## 🌟 Fitur Unggulan ArtaStudio
+## Fitur Unggulan ArtaStudio
 
 1. **Repository & Workspace Selector:**
    - Mengelompokkan proyek berdasarkan Repository Git nyata (`ArtaLoka`, `Tahqiq`, dll) lengkap dengan URL remote dan pemilih cabang (*branch switcher*).
