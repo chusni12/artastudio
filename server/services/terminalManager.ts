@@ -46,7 +46,13 @@ export class TerminalManager {
     }
 
     const isWindows = process.platform === 'win32';
-    const shell = isWindows ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/bash');
+    // Di CachyOS / Arch Linux, default shell user biasanya zsh atau fish. Jika fish, fallback ke bash/zsh agar kompatibel dengan POSIX PTY xterm
+    let shell = isWindows ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/bash');
+    if (!isWindows && shell.endsWith('/fish')) {
+      if (fs.existsSync('/bin/bash')) shell = '/bin/bash';
+      else if (fs.existsSync('/usr/bin/bash')) shell = '/usr/bin/bash';
+      else if (fs.existsSync('/bin/zsh')) shell = '/bin/zsh';
+    }
     const cwd = projectPath || process.cwd();
 
     // Pastikan PATH mencakup folder CLI opencode, agy, commandcode, nvm, cargo, local bin

@@ -55,7 +55,11 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
     wsRef.current = socket;
 
     socket.onopen = () => {
-      // Inisialisasi sesi aktif saat ini
+      // Inisialisasi seluruh sesi yang sudah ada di frontend ke backend secara paralel
+      terminalInstances.current.forEach((inst, sId) => {
+        initSessionOnServer(sId);
+      });
+      // Pastikan sesi aktif saat ini diinisialisasi
       initSessionOnServer(currentSessionIdRef.current);
     };
 
@@ -241,6 +245,9 @@ export const UniversalAgentTerminal: React.FC<UniversalAgentTerminalProps> = ({
   const initSessionOnServer = (sessId: string, pPath?: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     const inst = terminalInstances.current.get(sessId);
+    try {
+      inst?.fitAddon.fit();
+    } catch {}
     wsRef.current.send(
       JSON.stringify({
         channel: 'terminal',
