@@ -33,6 +33,85 @@ function printBanner() {
 }
 
 // ==============================================================================
+
+// ==============================================================================
+// 1B. Perintah: artastudio preview / info / notify
+// ==============================================================================
+if (command === "info") {
+  const cwd = process.cwd();
+  let projectName = path.basename(cwd);
+  let framework = "Vite React";
+  let previewUrl = "http://localhost:5173";
+  if (fs.existsSync(path.join(cwd, "wrangler.jsonc")) || fs.existsSync(path.join(cwd, "wrangler.json"))) {
+    framework = "Cloudflare Workers / Vite";
+  }
+  if (projectName.toLowerCase().includes("artaloka") || cwd.includes("bowhead")) {
+    previewUrl = "http://localhost:5199";
+  } else if (projectName.toLowerCase().includes("tahqiq")) {
+    previewUrl = "http://localhost:3000";
+  }
+  console.log(JSON.stringify({
+    studio: "ArtaStudio AI Web Development Suite",
+    projectName,
+    projectPath: cwd,
+    framework,
+    previewUrl,
+    environment: {
+      ARTASTUDIO: "true",
+      NODE_ENV: process.env.NODE_ENV || "development"
+    }
+  }, null, 2));
+  process.exit(0);
+}
+
+if (command === "preview") {
+  const sub = (args[1] || "status").toLowerCase();
+  const cwd = process.cwd();
+  const projectName = path.basename(cwd);
+  let defaultPort = "5173";
+  if (projectName.toLowerCase().includes("artaloka") || cwd.includes("bowhead")) {
+    defaultPort = "5199";
+  } else if (projectName.toLowerCase().includes("tahqiq")) {
+    defaultPort = "3000";
+  }
+
+  if (sub === "start" || sub === "run") {
+    console.log(`[ArtaStudio CLI] Menyalakan Live Preview server untuk ${projectName} di port ${defaultPort}...`);
+    const devProc = spawn("npm", ["run", "dev", "--", "--port", defaultPort, "--host", "127.0.0.1"], {
+      cwd,
+      stdio: "inherit",
+      shell: true,
+      detached: true
+    });
+    devProc.unref();
+    console.log(`✅ Live Preview server dimulai di background! URL: http://localhost:${defaultPort}`);
+    process.exit(0);
+  } else if (sub === "stop") {
+    console.log(`[ArtaStudio CLI] Menghentikan dev server di port ${defaultPort}...`);
+    try {
+      execSync(`lsof -ti :${defaultPort} | xargs kill -9`, { stdio: "ignore" });
+      console.log(`✅ Dev server di port ${defaultPort} berhasil dihentikan.`);
+    } catch {
+      console.log(`ℹ️ Tidak ada dev server yang aktif di port ${defaultPort}.`);
+    }
+    process.exit(0);
+  } else {
+    // status
+    let active = false;
+    try {
+      const out = execSync(`lsof -ti :${defaultPort}`, { encoding: "utf-8" }).trim();
+      active = Boolean(out);
+    } catch {}
+    console.log(JSON.stringify({
+      projectName,
+      port: defaultPort,
+      url: `http://localhost:${defaultPort}`,
+      status: active ? "running" : "stopped"
+    }, null, 2));
+    process.exit(0);
+  }
+}
+
 // 1. Perintah: artastudio help
 // ==============================================================================
 if (command === 'help' || command === '--help' || command === '-h') {

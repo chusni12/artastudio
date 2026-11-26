@@ -73,6 +73,44 @@ export class TerminalManager {
     const currentPath = process.env.PATH || '';
     const mergedPath = Array.from(new Set([...additionalPaths, ...currentPath.split(path.delimiter)])).join(path.delimiter);
 
+    // Pastikan file AGENTS.md ada di folder proyek agar AI otomatis membaca konteks ArtaStudio
+    try {
+      const agentsMdPath = path.join(cwd, 'AGENTS.md');
+      if (!fs.existsSync(agentsMdPath)) {
+        const projectName = path.basename(cwd);
+        const autoAgentsMd = `# Panduan Lingkungan ArtaStudio (Untuk AI Agent)
+
+Anda adalah AI Developer Agent yang bekerja di dalam ekosistem **ArtaStudio Suite**.
+- **Proyek Saat Ini:** ${projectName}
+- **Direktori Kerja Utama:** ${cwd}
+- **Live Preview Viewport:** Terletak di panel sebelah kanan browser user.
+
+## Peran & Tanggung Jawab:
+1. **Fokus Kode Proyek:** Semua perubahan kode, debugging, dan pembuatan fitur dilakukan langsung di dalam direktori proyek ini (${cwd}).
+2. **Kontrol Live Preview & Status Proyek:**
+   - Gunakan CLI bawaan untuk memeriksa status atau menyalakan dev server:
+     \`\`\`bash
+     artastudio preview status   # Periksa apakah Live Preview sedang aktif
+     artastudio preview start    # Menyalakan dev server Live Preview jika belum menyala
+     artastudio info             # Lihat informasi detail proyek, port, dan framework
+     \`\`\`
+3. **Pemeriksaan & Perbaikan Keamanan:**
+   - Jika menerima tugas perbaikan temuan keamanan (Database RLS, dependensi CVE, secrets exposure), lakukan perbaikan langsung pada berkas terkait secara terisolasi tanpa merusak arsitektur lain.
+4. **Validasi Kualitas Kode:**
+   - Selalu jalankan uji build lokal (\`npm run build\` atau \`npm test\`) sebelum menyelesaikan tugas.
+`;
+        fs.writeFileSync(agentsMdPath, autoAgentsMd, 'utf8');
+      }
+    } catch {}
+
+    const projectName = path.basename(cwd);
+    let previewPort = '5173';
+    if (projectName.toLowerCase().includes('artaloka') || cwd.includes('bowhead')) {
+      previewPort = '5199';
+    } else if (projectName.toLowerCase().includes('tahqiq')) {
+      previewPort = '3000';
+    }
+
     // Spawn TRUE PTY BASH/CMD INTERAKTIF
     const ptyProcess = ptyModule.spawn(shell, isWindows ? [] : ['-l'], {
       name: 'xterm-256color',
@@ -86,6 +124,10 @@ export class TerminalManager {
         COLORTERM: 'truecolor',
         FORCE_COLOR: '1',
         LANG: process.env.LANG || 'en_US.UTF-8',
+        ARTASTUDIO: 'true',
+        ARTASTUDIO_PROJECT_NAME: projectName,
+        ARTASTUDIO_PROJECT_PATH: cwd,
+        ARTASTUDIO_PREVIEW_URL: `http://localhost:${previewPort}`,
       },
     });
 
