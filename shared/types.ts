@@ -140,7 +140,7 @@ export interface DeploymentInfo {
   createdAt: string;
 }
 
-export type WebSocketChannel = 'logs' | 'errors' | 'chat' | 'system' | 'workspaces' | 'process' | 'git';
+export type WebSocketChannel = 'logs' | 'errors' | 'chat' | 'system' | 'workspaces' | 'process' | 'git' | 'terminal';
 
 export interface WebSocketEvent<T = unknown> {
   channel: WebSocketChannel;
@@ -308,4 +308,24 @@ export interface SecurityAuditReport {
   pillars: SecurityPillarResult[];
   summary: SecurityAuditSummary;
   gitSync?: SecurityGitSyncInfo;
+}
+
+export interface SkriptStateResponse {
+  projectPath: string;
+  content: string;
+  defaultContent: string;
+  builtinDefaultContent: string;
+  isCustomized: boolean;
+  hasCustomGlobalDefault: boolean;
+}
+
+export type WorkerOrchestrationState = 'idle' | 'working' | 'done' | 'failed' | 'blocked';
+
+export interface WorkerOrchestrationStatus {
+  workerId: number;
+  status: WorkerOrchestrationState;
+  summary: string;
+  updatedAt: string;
+  taskPreview?: string;
+  reportFile?: string;
 }

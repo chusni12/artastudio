@@ -5,6 +5,8 @@ dist
 projects.json
 removed_projects.json
 project_git_configs.json
+skript-default.md
+skript-state.json
 
 # Berkas lingkungan (dapat berisi rahasia API) — jangan pernah dipublikasikan
 .env

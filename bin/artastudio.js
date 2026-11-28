@@ -18,8 +18,82 @@ const projectRoot = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
 const command = (args[0] || 'start').toLowerCase();
 
-const PORT = process.env.PORT || '4000';
+const PORT = process.env.ARTASTUDIO_PORT || process.env.PORT || '4000';
 const isWindows = process.platform === 'win32';
+
+function parseCliFlags(rawArgs) {
+  const flags = {};
+  const positionals = [];
+  for (let i = 0; i < rawArgs.length; i++) {
+    const token = rawArgs[i];
+    if (token.startsWith('--')) {
+      const eqIdx = token.indexOf('=');
+      if (eqIdx !== -1) {
+        const key = token.slice(2, eqIdx).toLowerCase();
+        flags[key] = token.slice(eqIdx + 1);
+      } else {
+        const key = token.slice(2).toLowerCase();
+        const next = rawArgs[i + 1];
+        if (next !== undefined && !next.startsWith('--')) {
+          flags[key] = next;
+          i++;
+        } else {
+          flags[key] = 'true';
+        }
+      }
+    } else {
+      positionals.push(token);
+    }
+  }
+  return { flags, positionals };
+}
+
+function postJsonToStudio(endpointPath, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: Number(PORT) || 4000,
+        path: endpointPath,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+        timeout: 10000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data || '{}');
+            if (res.statusCode && res.statusCode >= 400) {
+              reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
+            } else {
+              resolve(parsed);
+            }
+          } catch {
+            if (res.statusCode && res.statusCode >= 400) {
+              reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+            } else {
+              resolve({ success: true, raw: data });
+            }
+          }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy(new Error('Request timeout menghubungi server ArtaStudio'));
+    });
+    req.write(body);
+    req.end();
+  });
+}
 
 function printBanner() {
   console.log('==========================================================');
@@ -112,6 +186,66 @@ if (command === "preview") {
   }
 }
 
+// ==============================================================================
+// 1C. Perintah: artastudio dispatch & artastudio report (Orchestrator Worker 1..32)
+// ==============================================================================
+if (command === 'dispatch') {
+  const { flags, positionals } = parseCliFlags(args.slice(1));
+  const workerId = Math.min(Math.max(parseInt(flags.worker || '1', 10) || 1, 1), 32);
+  const projectPath = path.resolve(flags.path || process.env.ARTASTUDIO_PROJECT_PATH || process.cwd());
+  const task = (flags.task || positionals.join(' ')).trim();
+  const agent = flags.agent ? flags.agent.trim() : undefined;
+
+  if (!task) {
+    console.error('❌ Parameter --task "<deskripsi tugas>" wajib diisi.');
+    process.exit(1);
+  }
+
+  try {
+    const result = await postJsonToStudio('/api/orchestrator/dispatch', {
+      projectPath,
+      workerId,
+      task,
+      agent,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(0);
+  } catch (err) {
+    console.error('❌ Gagal melakukan dispatch ke worker:', err.message);
+    process.exit(1);
+  }
+}
+
+if (command === 'report') {
+  const { flags, positionals } = parseCliFlags(args.slice(1));
+  const workerId = Math.min(
+    Math.max(parseInt(flags.worker || process.env.ARTASTUDIO_WORKER_ID || '1', 10) || 1, 1),
+    32
+  );
+  const status = (flags.status || 'DONE').toUpperCase();
+  const projectPath = path.resolve(flags.path || process.env.ARTASTUDIO_PROJECT_PATH || process.cwd());
+  const summary = (flags.summary || positionals.join(' ')).trim();
+
+  if (!summary) {
+    console.error('❌ Parameter --summary "<ringkasan hasil>" wajib diisi.');
+    process.exit(1);
+  }
+
+  try {
+    const result = await postJsonToStudio('/api/orchestrator/report', {
+      projectPath,
+      workerId,
+      status,
+      summary,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(0);
+  } catch (err) {
+    console.error('❌ Gagal mengirim report ke pemikir:', err.message);
+    process.exit(1);
+  }
+}
+
 // 1. Perintah: artastudio help
 // ==============================================================================
 if (command === 'help' || command === '--help' || command === '-h') {
@@ -123,6 +257,8 @@ Panduan Penggunaan ArtaStudio CLI:
   artastudio stop      : Menghentikan server studio yang sedang berjalan di port 4000
   artastudio status    : Memeriksa apakah server studio sedang berjalan
   artastudio build     : Mem-build frontend UI client secara manual
+  artastudio dispatch  : Mengirim tugas ke Worker 1..32 (--worker <N> [--agent <cli>] [--path <dir>] --task "<text>")
+  artastudio report    : Mengirim laporan hasil Worker ke Pemikir (--worker <N> [--status DONE|FAILED|BLOCKED] --summary "<text>")
   artastudio --help    : Menampilkan bantuan ini
 `);
   process.exit(0);
@@ -298,10 +434,7 @@ if (command === 'build') {
   printBanner();
 
   const serverFile = path.join(projectRoot, 'server', 'index.ts');
-  const serverProc = spawn('npx', ['tsx', serverFile], {
-    cwd: projectRoot,
-    stdio: 'inherit',
-    shell: true,
+  const serverProc = spawn(process.execPath,[path.join(projectRoot,'node_modules','tsx','dist','cli.mjs'),serverFile],{cwd:projectRoot,stdio:'inherit',
     env: {
       ...process.env,
       PORT,

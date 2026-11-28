@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import type { RepoProject, SecurityAuditReport, GitSyncStatus } from '../../../shared/types';
+import type { RepoProject, SecurityAuditReport, GitSyncStatus, SkriptStateResponse } from '../../../shared/types';
+import { SkriptEditorModal } from './SkriptEditorModal';
 import {
   Globe,
   Database,
@@ -95,11 +96,14 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
   const [activeTab, setActiveTab] = useState<HubTabId>(initialTab || 'domains');
   const [maxWorkers, setMaxWorkers] = useState<number>(() => {
     try {
-      return parseInt(localStorage.getItem('artastudio_max_workers') || '5', 10);
+      const stored = localStorage.getItem('artastudio_max_workers');
+      return stored ? Math.min(Math.max(parseInt(stored, 10), 1), 32) : 32;
     } catch {
-      return 5;
+      return 32;
     }
   });
+  const [skriptState, setSkriptState] = useState<SkriptStateResponse | null>(null);
+  const [isSkriptEditorOpen, setIsSkriptEditorOpen] = useState(false);
   const [gaId, setGaId] = useState('');
   const [isGaSaved, setIsGaSaved] = useState(false);
   const [customDomainInput, setCustomDomainInput] = useState('');
@@ -185,7 +189,22 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
     fetchSeoStatus();
     // Trigger dynamic Git sync status from server API
     fetchGitStatus();
+    // Trigger skript.md status check
+    fetchSkriptStatus();
   }, [isOpen, selectedRepo?.id, activePath, isArtaLoka, isTahqiq, isArtaStudio]);
+
+  const fetchSkriptStatus = async () => {
+    if (!activePath) return;
+    try {
+      const res = await fetch(`/api/skript?projectPath=${encodeURIComponent(activePath)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.success) {
+          setSkriptState(data);
+        }
+      }
+    } catch {}
+  };
 
   const fetchGitStatus = async () => {
     setIsCheckingGit(true);
@@ -1364,12 +1383,30 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
                     </button>
                   </div>
 
-                  {/* AI Memory Box */}
-                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/50">
-                    <span className="font-semibold text-slate-200 block mb-1">🧠 AI Memory & Custom Instructions</span>
-                    <p className="text-slate-400 text-[11px]">
-                      Aturan arsitektur bawaan di <span className="font-mono text-amber-400">AGENTS.md</span> selalu diutamakan AI saat memodifikasi kode {projectName}.
+                  {/* AI Memory & skript.md Card */}
+                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/50 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-200 block">🧠 AI Memory &amp; <span className="font-mono text-amber-400">skript.md</span></span>
+                      <span
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                          skriptState?.isCustomized
+                            ? 'bg-violet-500/10 text-violet-300 border-violet-500/30'
+                            : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                        }`}
+                      >
+                        {skriptState?.isCustomized ? 'Custom Proyek' : 'Default ArtaStudio'}
+                      </span>
+                    </div>
+                    <p className="text-slate-400 text-[11px] leading-relaxed">
+                      Aturan arsitektur di <span className="font-mono text-amber-400">AGENTS.md</span> dan protokol orkestrasi Pemikir &amp; 32 Worker di <span className="font-mono text-amber-400">skript.md</span> selalu diutamakan AI untuk {projectName}.
                     </p>
+                    <button
+                      type="button"
+                      onClick={() => setIsSkriptEditorOpen(true)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      Kelola / Ubah skript.md
+                    </button>
                   </div>
 
                   {/* Tes Persistensi IndexedDB */}
@@ -1727,6 +1764,14 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
           </div>
         </div>
       </div>
+
+      <SkriptEditorModal
+        isOpen={isSkriptEditorOpen}
+        onClose={() => setIsSkriptEditorOpen(false)}
+        projectPath={activePath}
+        projectName={projectName}
+        onSaved={(nextState) => setSkriptState(nextState)}
+      />
     </div>
   );
 };

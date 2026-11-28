@@ -10,6 +10,8 @@ import deployRouter from './routes/deploy';
 import chatRouter from './routes/chat';
 import securityRouter from './routes/security';
 import systemRouter, { startSystemUpdateChecker } from './routes/system';
+import skriptRouter from './routes/skript';
+import orchestratorRouter from './routes/orchestrator';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
@@ -32,6 +34,8 @@ app.use('/api/deploy', deployRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/security', securityRouter);
 app.use('/api/system', systemRouter);
+app.use('/api/skript', skriptRouter);
+app.use('/api/orchestrator', orchestratorRouter);
 
 // Healthcheck endpoint
 app.get('/api/health', (req: Request, res: Response) => {
