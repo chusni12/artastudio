@@ -125,6 +125,9 @@ export const StudioProjectHubModal: React.FC<StudioProjectHubModalProps> = ({
   const isTahqiq = projectId.includes('tahqiq') || projectName.toLowerCase().includes('tahqiq');
   const isArtaStudio = projectId.includes('artastudio') || (!isArtaLoka && !isTahqiq && (!selectedRepo || projectId === 'artastudio' || projectId === 'current/artastudio'));
 
+  // Connected domains per project
+  const [connectedDomains, setConnectedDomains] = useState<DomainItem[]>([]);
+
   const previewUrl = isArtaLoka
     ? 'http://localhost:5199'
     : isTahqiq
